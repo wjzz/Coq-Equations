@@ -7,7 +7,6 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-(*i camlp4deps: "parsing/grammar.cma" i*)
 (*i camlp4use: "pa_extend.cmo" i*)
 
 (* $Id: equations.ml4 11996 2009-03-20 01:22:58Z letouzey $ *)
@@ -76,22 +75,22 @@ let below_tac s =
   make_kn (MPfile below_tactics_path) (make_dirpath []) (mk_label s)
 
 let rec_tac h h' = 
-  TacArg(dummy_loc, TacCall(dummy_loc, 
-		Qualid (dummy_loc, qualid_of_string "Equations.Below.rec"),
-		[IntroPattern (dummy_loc, Genarg.IntroIdentifier h);
-		 IntroPattern (dummy_loc, Genarg.IntroIdentifier h')]))
+  TacArg(Loc.dummy_loc, TacCall(Loc.dummy_loc, 
+		Qualid (Loc.dummy_loc, qualid_of_string "Equations.Below.rec"),
+		[IntroPattern (Loc.dummy_loc, Genarg.IntroIdentifier h);
+		 IntroPattern (Loc.dummy_loc, Genarg.IntroIdentifier h')]))
 
 let rec_wf_tac h h' rel = 
-  TacArg(dummy_loc, TacCall(dummy_loc, 
-		Qualid (dummy_loc, qualid_of_string "Equations.Subterm.rec_wf_eqns_rel"),
-		[IntroPattern (dummy_loc, Genarg.IntroIdentifier h);
-		 IntroPattern (dummy_loc, Genarg.IntroIdentifier h');
+  TacArg(Loc.dummy_loc, TacCall(Loc.dummy_loc, 
+		Qualid (Loc.dummy_loc, qualid_of_string "Equations.Subterm.rec_wf_eqns_rel"),
+		[IntroPattern (Loc.dummy_loc, Genarg.IntroIdentifier h);
+		 IntroPattern (Loc.dummy_loc, Genarg.IntroIdentifier h');
 		 ConstrMayEval (ConstrTerm rel)]))
 
 let unfold_recursor_tac () = tac_of_string "Equations.Subterm.unfold_recursor" []
 
 let equations_tac_expr () = 
-  (TacArg(dummy_loc, TacCall(dummy_loc, Qualid (dummy_loc, qualid_of_string "Equations.DepElim.equations"), [])))
+  (TacArg(Loc.dummy_loc, TacCall(Loc.dummy_loc, Qualid (Loc.dummy_loc, qualid_of_string "Equations.DepElim.equations"), [])))
 
 let equations_tac () = tac_of_string "Equations.DepElim.equations" []
 
@@ -108,28 +107,28 @@ let noconf_tac () = tac_of_string "Equations.NoConfusion.solve_noconf" []
 let simpl_equations_tac () = tac_of_string "Equations.DepElim.simpl_equations" []
 
 let reference_of_global c =
-  Qualid (dummy_loc, Nametab.shortest_qualid_of_global Idset.empty c)
+  Qualid (Loc.dummy_loc, Nametab.shortest_qualid_of_global Idset.empty c)
 
 let solve_equation_tac c = tac_of_string "Equations.DepElim.solve_equation"
 
 let impossible_call_tac c = Tacinterp.glob_tactic
-  (TacArg(dummy_loc,TacCall(dummy_loc, 
-			    Qualid (dummy_loc, qualid_of_string "Equations.DepElim.impossible_call"),
+  (TacArg(Loc.dummy_loc,TacCall(Loc.dummy_loc, 
+			    Qualid (Loc.dummy_loc, qualid_of_string "Equations.DepElim.impossible_call"),
 			    [ConstrMayEval (ConstrTerm (CRef (reference_of_global c)))])))
 
 let depelim_tac h = tac_of_string "Equations.DepElim.depelim"
-  [IntroPattern (dummy_loc, Genarg.IntroIdentifier h)]
+  [IntroPattern (Loc.dummy_loc, Genarg.IntroIdentifier h)]
 
 let do_empty_tac h = tac_of_string "Equations.DepElim.do_empty"
-  [IntroPattern (dummy_loc, Genarg.IntroIdentifier h)]
+  [IntroPattern (Loc.dummy_loc, Genarg.IntroIdentifier h)]
 
 let depelim_nosimpl_tac h = tac_of_string "Equations.DepElim.depelim_nosimpl"
-  [IntroPattern (dummy_loc, Genarg.IntroIdentifier h)]
+  [IntroPattern (Loc.dummy_loc, Genarg.IntroIdentifier h)]
 
 let simpl_dep_elim_tac () = tac_of_string "Equations.DepElim.simpl_dep_elim" []
 
 let depind_tac h = tac_of_string "Equations.DepElim.depind"
-  [IntroPattern (dummy_loc, Genarg.IntroIdentifier h)]
+  [IntroPattern (Loc.dummy_loc, Genarg.IntroIdentifier h)]
   
 let mkEq t x y = 
   mkApp (Coqlib.build_coq_eq (), [| t; x; y |])
@@ -1045,7 +1044,7 @@ let split_var (env,evars) var delta =
 	(* Some constructor's type is not refined enough to match ty *)
 	if array_exists (fun x -> x = UnifStuck) unify then
 	  None
-(* 	  user_err_loc (dummy_loc, "split_var",  *)
+(* 	  user_err_loc (Loc.dummy_loc, "split_var",  *)
 (* 		       str"Unable to split variable " ++ pr_name id ++ str" of (reduced) type " ++ *)
 (* 			 print_constr_env (push_rel_context before env) newty  *)
 (* 		       ++ str" to match a user pattern") *)
@@ -1168,7 +1167,7 @@ let rec covering_aux env evars data prev clauses path (ctx,pats,ctx' as prob) le
       | UnifSuccess s -> 
 	  let prevmatch = List.filter (fun ((lhs',rhs'),used) -> matches lhs' prob <> UnifFailure) prev in
 (* 	    if List.exists (fun (_, used) -> not used) prev then *)
-(* 	      user_err_loc (dummy_loc, "equations", str "Unused clause: " ++ pr_clause env (lhs, rhs)); *)
+(* 	      user_err_loc (Loc.dummy_loc, "equations", str "Unused clause: " ++ pr_clause env (lhs, rhs)); *)
 	    if prevmatch = [] then
 	      let env' = push_rel_context_eos ctx env in
 	      let get_var loc i s =
@@ -1465,7 +1464,7 @@ let term_of_tree status isevar env (i, delta, ty) ann tree =
 	in
 	let ty' = it_mkProd_or_LetIn ty ctx in
 	let let_ty' = mkLambda_or_LetIn split (lift 1 ty') in
-	let term = e_new_evar isevar env ~src:(dummy_loc, QuestionMark (Define true)) let_ty' in
+	let term = e_new_evar isevar env ~src:(Loc.dummy_loc, QuestionMark (Define true)) let_ty' in
 	let ev = fst (destEvar term) in
 	  oblevars := Intset.add ev !oblevars;
 	  term, ty'
@@ -1481,7 +1480,7 @@ let term_of_tree status isevar env (i, delta, ty) ann tree =
 	let sterm, sty = aux rest in
 	let term, ty = 
 	  let term = mkLetIn (Name (id_of_string "prog"), sterm, sty, lift 1 sty) in
-	  let term = helper_evar isevar ev (Global.env ()) term (dummy_loc, QuestionMark (Define false)) in
+	  let term = helper_evar isevar ev (Global.env ()) term (Loc.dummy_loc, QuestionMark (Define false)) in
 	    oblevars := Intset.add ev !oblevars;
 	    helpers := (ev, rarg) :: !helpers;
 	    term, ty
@@ -1536,7 +1535,7 @@ let term_of_tree status isevar env (i, delta, ty) ann tree =
 			Lazy.force coq_nat)
 	  in
 	  let ty = it_mkLambda_or_LetIn (lift 2 ty) [nbbranches;nbdiscr] in
-	  let term = e_new_evar isevar env ~src:(dummy_loc, QuestionMark status) ty in
+	  let term = e_new_evar isevar env ~src:(Loc.dummy_loc, QuestionMark status) ty in
 	  let ev = fst (destEvar term) in
 	    oblevars := Intset.add ev !oblevars;
 	    term
@@ -1817,7 +1816,7 @@ let clean_clause (ctx, pats, ty, c) =
   map_rhs (nf_beta Evd.empty) (fun x -> x) c)
 
 let map_evars_in_constr evar_map c = 
-  evar_map (fun id -> constr_of_global (Nametab.global (Qualid (dummy_loc, qualid_of_ident id)))) c
+  evar_map (fun id -> constr_of_global (Nametab.global (Qualid (Loc.dummy_loc, qualid_of_ident id)))) c
 (*  list_try_find  *)
 (* 	      (fun (id', c, filter) ->  *)
 (* 		 if id = id' then (c, filter) else failwith "") subst) c *)
@@ -1968,7 +1967,7 @@ let subst_comp_proj_split f proj s =
   map_split (subst_comp_proj f proj) s
 
 let reference_of_id s = 
-  Ident (dummy_loc, s)
+  Ident (Loc.dummy_loc, s)
 
 let clear_ind_assums ind ctx = 
   let rec clear_assums c =
@@ -2138,7 +2137,7 @@ let build_equations with_ind env id info data sign is_rec arity cst
 	  if leninds > 1 then
 	    (Indschemes.do_mutual_induction_scheme
 		(list_map_i (fun i ind ->
-		  let id = (dummy_loc, add_suffix ind.mind_entry_typename "_mut") in
+		  let id = (Loc.dummy_loc, add_suffix ind.mind_entry_typename "_mut") in
 		    (id, false, (k, i), GProp Null)) 0 inds);
 	     let elimid = 
 	       add_suffix (List.hd inds).mind_entry_typename "_mut"
@@ -2286,7 +2285,7 @@ let build_equations with_ind env id info data sign is_rec arity cst
       let hook subst gr = 
 	if n <> None then
 	  Autorewrite.add_rew_rules info.base_id 
-	    [dummy_loc, constr_of_global gr, true, Tacexpr.TacId []]
+	    [Loc.dummy_loc, constr_of_global gr, true, Tacexpr.TacId []]
 	else (Typeclasses.declare_instance None true gr;
 	      Auto.add_hints false [info.base_id] 
 		(Auto.HintsExternEntry (0, None, impossible_call_tac (ConstRef cst))));
@@ -2925,9 +2924,6 @@ let rec int_of_coq_nat c =
   | App (f, [| arg |]) -> succ (int_of_coq_nat arg)
   | _ -> 0
 
-let gclause_none =
-  { onhyps=Some []; concl_occs=no_occurrences_expr }
-
 let solve_equations_goal destruct_tac tac gl =
   let concl = pf_concl gl in
   let targetn, branchesn, targ, brs, b =
@@ -2953,7 +2949,7 @@ let solve_equations_goal destruct_tac tac gl =
   let cleantac = tclTHEN (intros_using ids) (thin ids) in
   let dotac = tclDO (succ targ) intro in
   let letintac (id, br, brt) = 
-    tclTHEN (letin_tac None (Name id) br (Some brt) gclause_none) tac 
+    tclTHEN (letin_tac None (Name id) br (Some brt) nowhere) tac 
   in
   let subtacs =
     tclTHENS destruct_tac (map letintac branches)

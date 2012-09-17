@@ -7,7 +7,6 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-(*i camlp4deps: "parsing/grammar.cma" i*)
 (*i camlp4use: "pa_extend.cmo" i*)
 
 (* $Id: equations.ml4 11996 2009-03-20 01:22:58Z letouzey $ *)
@@ -53,15 +52,15 @@ let derive_subterm ind =
   let params = mind.mind_nparams in
   let ctx = map_rel_context refresh_universes ctx in
   let lenargs = len - params in
-  let argbinders, parambinders = list_chop lenargs ctx in
+  let argbinders, parambinders = CList.chop lenargs ctx in
   let indapp = mkApp (mkInd ind, extended_rel_vect 0 parambinders) in
-  let getargs t = snd (list_chop params (snd (decompose_app t))) in
+  let getargs t = snd (CList.chop params (snd (decompose_app t))) in
   let inds = 
     let branches = Array.mapi (fun i ty ->
       let args, concl = decompose_prod_assum ty in
       let lenargs = List.length args in
       let lenargs' = lenargs - params in
-      let args', params' = list_chop lenargs' args in
+      let args', params' = CList.chop lenargs' args in
       let recargs = list_map_filter_i (fun i (n, _, t) ->
 	let ctx, ar = decompose_prod_assum t in
 	  match kind_of_term (fst (decompose_app ar)) with
@@ -71,7 +70,7 @@ let derive_subterm ind =
       in
       let constr = mkApp (mkConstruct (ind, succ i), extended_rel_vect 0 args) in
       let constrargs = getargs concl in
-      let branches = list_map_i
+      let branches = CList.map_i
 	(fun j (ctx, i', r, rargs) ->
 	  let ctxlen = List.length ctx in
 	  let subargs = 
@@ -126,7 +125,7 @@ let derive_subterm ind =
   in
   let branches = trans_branch :: branches in
   let declare_one_ind i ind branches =
-    let indid = Nametab.basename_of_global (IndRef ind) in
+    let indid = Nametab.basename_of_global (Globnames.IndRef ind) in
     let subtermid = add_suffix indid "_direct_subterm" in
     let constructors = map (fun (i, j, constr) -> constr) branches in
     let consnames = map (fun (i, j, _) ->
@@ -163,14 +162,14 @@ let derive_subterm ind =
     let k = Command.declare_mutual_inductive_with_eliminations Declare.KernelSilent inductive [] in
     let subind = mkInd (k,0) in
     let constrhints = 
-      list_map_i (fun i entry -> 
-	list_map_i (fun j _ -> None, true, Auto.PathAny, mkConstruct ((k,i),j)) 1 entry.mind_entry_lc)
+      CList.map_i (fun i entry -> 
+	CList.map_i (fun j _ -> None, true, Auto.PathAny, mkConstruct ((k,i),j)) 1 entry.mind_entry_lc)
 	0 inds 
     in Auto.add_hints false [subterm_relation_base]
       (Auto.HintsResolveEntry (List.concat constrhints));
       (* Proof of Well-foundedness *)
       let id = add_prefix "well_founded_" (List.hd inds).mind_entry_typename in
-      let relid = add_suffix (Nametab.basename_of_global (IndRef ind)) "_subterm" in
+      let relid = add_suffix (Nametab.basename_of_global (Globnames.IndRef ind)) "_subterm" in
       let evm = ref Evd.empty in
       let env = Global.env () in
       let env' = push_rel_context parambinders env in
@@ -213,7 +212,7 @@ let derive_subterm ind =
 	  in
 	  let cst = declare_constant relid def ty (Decl_kinds.IsDefinition Decl_kinds.Definition) in
 	    (* Impargs.declare_manual_implicits false (ConstRef cst) ~enriching:false *)
-	    (* 	(list_map_i (fun i _ -> ExplByPos (i, None), (true, true, true)) 1 parambinders); *)
+	    (* 	(CList.map_i (fun i _ -> ExplByPos (i, None), (true, true, true)) 1 parambinders); *)
 	    Auto.add_hints false [subterm_relation_base] 
 	      (Auto.HintsUnfoldEntry [EvalConstRef cst]);
 	    mkApp (mkConst cst, extended_rel_vect 0 parambinders)
@@ -225,8 +224,8 @@ let derive_subterm ind =
       let ty = it_mkProd_or_LetIn ty parambinders in
       let body = it_mkLambda_or_LetIn (Option.get body) parambinders in
       let hook vis gr =
-	let cst = match gr with ConstRef kn -> kn | _ -> assert false in
-	let inst = Typeclasses.new_instance kl None global (ConstRef cst) in
+	let cst = match gr with Globnames.ConstRef kn -> kn | _ -> assert false in
+	let inst = Typeclasses.new_instance kl None global (Globnames.ConstRef cst) in
 	  Typeclasses.add_instance inst
       in
       let obls, _, constr, typ = Obligations.eterm_obligations env id !evm 0 body ty in
@@ -252,7 +251,7 @@ let derive_below ind =
   let argsvect = rel_vect 0 len in
   let indty = mkApp (mkInd ind, argsvect) in
   let binders = (Name (id_of_string "c"), None, indty) :: ctx in
-  let argbinders, parambinders = list_chop (succ len - params) binders in
+  let argbinders, parambinders = CList.chop (succ len - params) binders in
   let arity = it_mkProd_or_LetIn (new_Type ()) argbinders in
   let aritylam = it_mkLambda_or_LetIn (new_Type ()) argbinders in
   let paramsvect = Array.map (lift 1) (rel_vect (succ len - params) params) in
@@ -271,7 +270,7 @@ let derive_below ind =
       let nargs = constructor_nrealargs (Global.env ()) (ind, succ i) in
       let recarg = mkVar recid in
       let args, _ = decompose_prod_assum (substl [mkInd ind] ty) in
-      let args, _ = list_chop (List.length args - params) args in
+      let args, _ = CList.chop (List.length args - params) args in
       let ty' = substl [recarg] ty in
       let args', _ = decompose_prod_assum ty' in
       let arg_tys = fst (List.fold_left (fun (acc, n) (_,_,t) ->
@@ -337,7 +336,7 @@ let derive_below ind =
   in
   let fixB = mkFix (([| len |], 0), ([| Name recid |], [| arity |], [| subst_vars [recid; pid] termB |])) in
   let bodyB = it_mkLambda_or_LetIn fixB (pdecl :: parambinders) in
-  let id = add_prefix "Below_" (Nametab.basename_of_global (IndRef ind)) in
+  let id = add_prefix "Below_" (Nametab.basename_of_global (Globnames.IndRef ind)) in
   let below = declare_constant id bodyB None (Decl_kinds.IsDefinition Decl_kinds.Definition) in
   let fixb = mkFix (([| len |], 0), ([| Name recid |], [| arityb |], 
 				    [| subst_vars [recid; stepid] termb |])) in
@@ -350,7 +349,7 @@ let derive_below ind =
     it_mkLambda_or_LetIn (subst_vars [pid] (mkLambda_or_LetIn stepdecl fixb)) (pdecl :: parambinders)
   in
   let bodyb = replace_vars [belowid, mkConst below] bodyb in
-  let id = add_prefix "below_" (Nametab.basename_of_global (IndRef ind)) in
+  let id = add_prefix "below_" (Nametab.basename_of_global (Globnames.IndRef ind)) in
     ignore(declare_constant id bodyb None (Decl_kinds.IsDefinition Decl_kinds.Definition))
     
 

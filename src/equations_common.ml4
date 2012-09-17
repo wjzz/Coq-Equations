@@ -1,4 +1,3 @@
-(* -*- compile-command: "COQBIN=~/research/coq/trunk/bin/ make -k -C .. src/equations_plugin.cma src/equations_plugin.cmxs" -*- *)
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
 (* <O___,, * CNRS-Ecole Polytechnique-INRIA Futurs-Universite Paris Sud *)
@@ -6,9 +5,6 @@
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
-
-(*i camlp4deps: "parsing/grammar.cma" i*)
-(*i camlp4use: "pa_extend.cmo" i*)
 
 (* $Id: equations.ml4 11996 2009-03-20 01:22:58Z letouzey $ *)
 
@@ -27,7 +23,7 @@ open Typeops
 open Type_errors
 open Pp
 open Proof_type
-
+open Globnames
 open Glob_term
 open Retyping
 open Pretype_errors
@@ -122,7 +118,7 @@ let mkHRefl t x =
 	[| refresh_universes_strict t; x |])
 
 let tac_of_string str args =
-  Tacinterp.interp (TacArg(dummy_loc, TacCall(dummy_loc, Qualid (dummy_loc, qualid_of_string str), args)))
+  Tacinterp.interp (TacArg(Loc.dummy_loc, TacCall(Loc.dummy_loc, Qualid (Loc.dummy_loc, qualid_of_string str), args)))
 
 let equations_path = ["Equations";"Equations"]
 let coq_dynamic_ind = lazy (init_constant equations_path "dynamic")
@@ -175,7 +171,7 @@ let coq_notT = lazy (init_constant ["Coq";"Init";"Logic_Type"] "notT")
 let coq_ImpossibleCall = lazy (init_constant ["Equations";"DepElim"] "ImpossibleCall")
 
 let unfold_add_pattern = lazy
-  (Tactics.unfold_in_concl [((false, []), EvalConstRef (destConst (Lazy.force coq_add_pattern)))])
+  (Tactics.unfold_in_concl [(Locus.AllOccurrences, EvalConstRef (destConst (Lazy.force coq_add_pattern)))])
 
 let coq_dynamic_list = lazy (mkApp (Lazy.force coq_list_ind, [| Lazy.force coq_dynamic_ind |]))
 
@@ -206,6 +202,11 @@ let rec head_of_constr t =
     | App (f,args)  -> head_of_constr f
     | _      -> t
       
+let allHyps = { Locus.onhyps = None; Locus.concl_occs = Locus.NoOccurrences }
+let allHypsAndConcl = { Locus.onhyps = None; Locus.concl_occs = Locus.AllOccurrences }
+let nowhere = { Locus.onhyps = Some []; concl_occs = Locus.NoOccurrences }
+let onConcl = { Locus.onhyps = Some []; concl_occs = Locus.AllOccurrences }
+
 TACTIC EXTEND decompose_app
 [ "decompose_app" ident(h) ident(h') constr(c) ] -> [ fun gl ->
     let f, args = decompose_app c in
@@ -243,8 +244,6 @@ END
 
 
 open Tacexpr
-
-let nowhere = { onhyps = Some []; concl_occs = no_occurrences_expr }
 
 (* Lifting a [rel_context] by [n]. *)
 
@@ -308,7 +307,7 @@ let unfold_head env (ids, csts) c =
 	| true, f' -> true, Reductionops.whd_betaiota Evd.empty (mkApp (f', args))
 	| false, _ -> 
 	    let done_, args' = 
-	      array_fold_left_i (fun i (done_, acc) arg -> 
+	      CArray.fold_left_i (fun i (done_, acc) arg -> 
 		if done_ then done_, arg :: acc 
 		else match aux arg with
 		| true, arg' -> true, arg' :: acc
@@ -364,7 +363,7 @@ open Eauto
 
 TACTIC EXTEND autounfold_first
 | [ "autounfold_first" hintbases(db) "in" hyp(id) ] ->
-    [ autounfold_first (match db with None -> ["core"] | Some x -> x) (Some (id, InHyp)) ]
+    [ autounfold_first (match db with None -> ["core"] | Some x -> x) (Some (id, Locus.InHyp)) ]
 | [ "autounfold_first" hintbases(db) ] ->
     [ autounfold_first (match db with None -> ["core"] | Some x -> x) None ]
 END

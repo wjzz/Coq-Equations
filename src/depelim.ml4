@@ -6,7 +6,6 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-(*i camlp4deps: "parsing/grammar.cma" i*)
 (*i camlp4use: "pa_extend.cmo" i*)
 
 (* $Id: equations.ml4 11996 2009-03-20 01:22:58Z letouzey $ *)
@@ -65,7 +64,7 @@ let ids_of_constr ?(all=false) vars c =
 	| Construct (ind,_)
 	| Ind ind ->
             let (mib,mip) = Global.lookup_inductive ind in
-	      array_fold_left_from
+	      CArray.fold_left_from
 		(if all then 0 else mib.Declarations.mind_nparams)
 		aux vars args
 	| _ -> fold_constr aux vars c)
@@ -78,7 +77,7 @@ let decompose_indapp f args =
   | Ind ind ->
       let (mib,mip) = Global.lookup_inductive ind in
       let first = mib.Declarations.mind_nparams_rec in
-      let pars, args = array_chop first args in
+      let pars, args = CArray.chop first args in
 	mkApp (f, pars), args
   | _ -> f, args
 
@@ -181,7 +180,7 @@ let needs_generalization gl id =
       let f', args' = decompose_indapp f args in
       let parvars = ids_of_constr ~all:true Idset.empty f' in
 	if not (linear parvars args') then true
-	else array_exists (fun x -> not (isVar x)) args'
+	else CArray.exists (fun x -> not (isVar x)) args'
 	  
 TACTIC EXTEND needs_generalization
 | [ "needs_generalization" hyp(id) ] -> 
@@ -245,10 +244,10 @@ let abstract_args gl generalize_vars dep id defined f args =
     let parvars = ids_of_constr ~all:true Idset.empty f' in
       if not (linear parvars args') then true, f, args
       else
-	match array_find_i (fun i x -> not (isVar x)) args' with
+	match CArray.find_i (fun i x -> not (isVar x)) args' with
 	| None -> false, f', args'
 	| Some nonvar ->
-	    let before, after = array_chop nonvar args' in
+	    let before, after = CArray.chop nonvar args' in
 	      true, mkApp (f', before), after
   in
     if dogen then
@@ -330,7 +329,7 @@ let dependent_pattern ?(pattern_term=true) c gl =
     | _ -> pf_get_new_id (id_of_string (hdchar (pf_env gl) c)) gl
   in
   let mklambda ty (c, id, cty) =
-    let conclvar = subst_closed_term_occ all_occurrences c ty in
+    let conclvar = subst_closed_term_occ Locus.AllOccurrences c ty in
       mkNamedLambda id cty conclvar
   in
   let subst = 

@@ -7,7 +7,6 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-(*i camlp4deps: "parsing/grammar.cma" i*)
 (*i camlp4use: "pa_extend.cmo" i*)
 
 (* $Id: equations.ml4 11996 2009-03-20 01:22:58Z letouzey $ *)
@@ -80,7 +79,7 @@ let decompose_indapp f args =
   | Ind ind ->
       let (mib,mip) = Global.lookup_inductive ind in
       let first = mib.Declarations.mind_nparams_rec in
-      let pars, args = array_chop first args in
+      let pars, args = CArray.chop first args in
 	mkApp (f, pars), args
   | _ -> f, args
 
@@ -159,7 +158,7 @@ let sigmaize ?(liftty=0) env sigma f =
 	    [|argtyp; pred; lift 1 make; mkRel 1|])
   in argtyp, pred, indices, indexproj, valproj, valsig, tysig
 
-let ind_name ind = Nametab.basename_of_global (IndRef ind)
+let ind_name ind = Nametab.basename_of_global (Globnames.IndRef ind)
 
 open Decl_kinds
 
@@ -177,9 +176,9 @@ let declare_sig_of_ind env ind =
   let lenpars = mib.mind_nparams_rec in
   let lenargs = List.length ctx - lenpars in
   if lenargs = 0 then
-    Errors.user_err_loc (dummy_loc, "Derive Signature", 
+    Errors.user_err_loc (Loc.dummy_loc, "Derive Signature", 
 		 str"No signature to derive for non-dependent inductive types");
-  let args, pars = list_chop lenargs ctx in
+  let args, pars = CList.chop lenargs ctx in
   let parapp = mkApp (mkInd ind, extended_rel_vect 0 pars) in
   let fullapp = mkApp (mkInd ind, extended_rel_vect 0 ctx) in
   let idx, pred, _, _, _, valsig, _ = 
@@ -219,7 +218,7 @@ VERNAC COMMAND EXTEND Derive_Signature
 END
 
 let get_signature env sigma ty =
-  let sigma', idx = new_evar sigma env ~src:(dummy_loc, Evd.InternalHole) (new_Type ()) in
+  let sigma', idx = new_evar sigma env ~src:(Loc.dummy_loc, Evar_kinds.InternalHole) (new_Type ()) in
   let _idxev = fst (destEvar idx) in
   let inst = mkApp (Lazy.force signature_ref, [| ty; idx |]) in
   let sigma', tc =
@@ -256,7 +255,7 @@ let pattern_sigma c hyp gl =
 	constrs_of_coq_sigma (pf_env gl) (project gl) t p @ terms
     | _ -> terms
   in
-  let pat = Pattern.pattern_of_constr (project gl) in
+  let pat = Patternops.pattern_of_constr (project gl) in
   let terms = 
     match terms with
     | (x, t, p, rest) :: _ :: _ -> terms @ constrs_of_coq_sigma (pf_env gl) (project gl) t p 
