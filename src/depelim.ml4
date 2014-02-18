@@ -363,6 +363,12 @@ let concat_string_array : string array -> string =
     let l = Array.to_list arr in
     List.fold_left (fun x y -> if x="" then y else x ^ " " ^ y) "" l
 
+let simplify_ind_name : string -> string = 
+  fun s ->
+    Str.split (Str.regexp_string ".") s 
+    |> List.rev
+    |> List.hd
+
 let rec str_of_c : (constr, types) kind_of_term -> string = function
   | Rel n -> string_of_int n
   | Var n -> string_of_id n
@@ -382,7 +388,8 @@ let rec str_of_c : (constr, types) kind_of_term -> string = function
       | Anonymous ->
         sprintf "(%s -> %s)" stp1 stp2
       | Name id ->
-        sprintf "(%s : %s) -> %s" (string_of_id id) stp1 stp2
+        sprintf "(%s : %s) -> %s" 
+	  (string_of_id id) stp1 stp2
     end
   | Lambda _ -> "lambda"
   | LetIn _ -> "let in"
@@ -391,13 +398,17 @@ let rec str_of_c : (constr, types) kind_of_term -> string = function
     let sxs = Array.map (fun c -> str_of_c (kind_of_term c)) xs in
     sprintf "%s %s" sx (concat_string_array sxs)
   (* | Const cn -> sprintf "[const %s]" (string_of_con cn) *)
-  | Const cn -> sprintf "%s" (string_of_con cn)
+  | Const cn -> simplify_ind_name (string_of_con cn)
   (* | Ind (mind, _n) -> sprintf "[ind %s]" (string_of_mind mind) *)
-  | Ind (mind, _n) -> string_of_mind mind
+  | Ind (mind, _n) -> simplify_ind_name (string_of_mind mind)
   | Construct _ -> "constructor"
   | Case _ -> "case"
   | Fix _ -> "fix"
   | CoFix _ -> "cofix"
+
+let print_constr_structure : constr -> unit = 
+  fun c ->
+    Printf.eprintf "%s\n%!" (str_of_c (kind_of_term c))
 
 (***************************************************************)
 (* Introductions *)
@@ -484,26 +495,68 @@ let noconf_ref : identifier -> tactic =
   fun id ->
     tac_of_string "noconf_ref" [IntroPattern (dummy_loc, Genarg.IntroIdentifier id)]
 
-let revert_until : identifier -> tactic =
+let revert_blocking_until : identifier -> tactic =
   fun id ->
-    tac_of_string "revert_until" [IntroPattern (dummy_loc, Genarg.IntroIdentifier id)]
+    tac_of_string "revert_blocking_until" 
+      [IntroPattern (dummy_loc, Genarg.IntroIdentifier id)]
+
+let build_lemma_constant : string -> constant =
+  fun lemma_name ->
+    let lemma_label = Names.mk_label lemma_name in
+    let dir_path = Names.empty_dirpath in
+    let module_path = Names.MPfile 
+      (Names.make_dirpath [ id_of_string "DepElim" ; id_of_string "Equations" ]) in
+    Names.make_con module_path dir_path lemma_label
+
+let get_evars : constr array =
+  Array.map 
+    (fun i -> Term.mkEvar (existential_of_int i, [||])) 
+    [| 1;2;3;4 |]
+      
+let wjzz_refine : tactic = 
+  fun g ->
+    try 
+      let tmFun = mkConst (build_lemma_constant "solution_left") in
+      Hiddentac.h_apply true false [ dummy_loc, (tmFun, NoBindings) ] g
+      (* let tm = mkApp (tmFun, get_evars) in *)
+      (* (\* let gs = Tacmach.refine tm g in *\) *)
+      (* let gs = Refine.refine (Evd.empty, tm) g in *)
+      (* let () = eprintf "Result goal no: %d%!" (List.length gs.it) in *)
+      (* gs *)
+    with
+      | Refiner.FailError (l, s) as e -> 
+	let s = (string_of_ppcmds (Lazy.force s)) in
+	(eprintf "lvl = %d; s = %s\n%!" l s; raise e)
+      | Compat.Loc.Exc_located (a, e2) as e ->
+	(* let x = a + 1 in  *)
+	let s1 = Printexc.to_string e in 
+	let s2 = Printexc.to_string e2 in 
+      	(eprintf "Raised a located exception! %s\n%s\n%!" s1 s2; raise e)
+      | TypeError (env, err) as e->
+	let () = ppnl (Himsg.explain_type_error env Evd.empty err) in
+	raise e
+      | e -> 
+	let s = Printexc.to_string e in 
+	(eprintf "Raised an exception!\n%s%!" s; raise e)
 
 let wjzz_eq_case : Names.name -> equality_info -> types -> identifier -> tactic =
   fun n eqinfo tp2 id ->
     match is_variable eqinfo.lhs , is_variable eqinfo.rhs with
       | Some x , _ ->
-        let () = eprintf "Variable %s\n" (string_of_id x) in
+        let () = eprintf "Variable %s\n%!" (string_of_id x) in
         (* tclIDTAC gl *)
         tclTHENLIST
           [ Hiddentac.h_move true x  (MoveBefore id)
           ; Hiddentac.h_move true id (MoveBefore x)
-          ; revert_until x
+          ; revert_blocking_until x
           ; Hiddentac.h_revert [ x ]
-          ; tclIDTAC_MESSAGE (str "hello3")
-          ; Tacmach.refine (mkVar (id_of_string "solution_left"))
+          ; tclIDTAC_MESSAGE (str "  hello3\n")
+	  (* wjzz: this is the key point for now *)
+	  ; wjzz_refine
+          (* ; Tacmach.refine (mkVar (id_of_string "solution_left")) *)
           (* ; refine_tac (Evd.open_constr) *)
           (* h_apply false (mkVar (id_of_string "solution_left"), []) None *)
-          ; tclIDTAC_MESSAGE (str "hello4")
+          ; tclIDTAC_MESSAGE (str "  hello4\n")
           ]
       | None, Some y ->
         let () = eprintf "Variable %s\n" (string_of_id y) in
@@ -536,6 +589,35 @@ let wjzz : constr -> tactic =
         (* do nothing? maybe we should always try intro *)
         tclIDTAC
 
+let simplify_one : constr -> tactic = 
+  fun c ->
+    let id = gen_fresh_name () in
+    let ck = kind_of_term c in
+    let () = eprintf "%s\n%!" (str_of_c ck) in
+    match test_constr ck with
+      | Equality (n, eq, tp2) ->
+        let () = eprintf "equality found!\n" in
+        let id = gen_fresh_name () in
+        tclTHEN (Hiddentac.h_intro id)
+          (* (noconf_ref id) *)
+      	  (* tclIDTAC *)
+          (wjzz_eq_case n eq tp2 id)
+
+      | Block ->
+        let () = eprintf "blocked!\n" in
+        tclFAIL 0 (str "We are blocked!")
+
+      | Product _ ->
+	(* let () = eprintf "product! \n%!" in p *)
+        let id = gen_fresh_name () in
+        Hiddentac.h_intro id
+
+      | Unknown ->
+	let () = eprintf "unknown! \n%!" in 
+	tclFAIL 0 (str "No matching case")
+
+
+
 TACTIC EXTEND wjzz_test
-[ "wjzz_simplify_one_dep_elim" constr(c) ] -> [ wjzz c ]
+[ "wjzz_simplify_one_dep_elim" constr(c) ] -> [ simplify_one c ]
 END
