@@ -13,7 +13,7 @@ Module TestF.
   
   Next Obligation. exact IH. Defined.
   (* bug forgot to backport from trunk in obligations.ml *)
-  Solve Obligations.
+  (* Solve Obligations. *) (* wjzz: works in 8.4pl3 ;) *)
 
 End TestF.
 
@@ -144,7 +144,7 @@ unzip_dec A B _ _ ?(S n) (cons (pair x y) n v) with unzip_dec v := {
   | pair xs ys := (cons x xs, cons y ys) }.
 
 (* Bug *)
-Solve Obligations.
+(* Solve Obligations. *) (* wjzz: again, works in latest release *)
 
 Typeclasses Transparent vector_subterm.
 
