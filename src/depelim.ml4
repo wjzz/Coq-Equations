@@ -350,3 +350,192 @@ TACTIC EXTEND dependent_pattern_from
 | ["dependent" "pattern" "from" constr(c) ] ->
     [ dependent_pattern ~pattern_term:false c ]
 END
+
+(** wjzz start **)
+
+(********************************************************************)
+(* Analysis of the term structure *)
+
+open Printf
+
+let concat_string_array : string array -> string =
+  fun arr ->
+    let l = Array.to_list arr in
+    List.fold_left (fun x y -> if x="" then y else x ^ " " ^ y) "" l
+
+let rec str_of_c : (constr, types) kind_of_term -> string = function
+  | Rel n -> string_of_int n
+  | Var n -> string_of_id n
+  | Meta _mv -> "meta"
+  | Evar _ -> "evar"
+  | Sort s ->
+    begin match family_of_sort s with
+      | InProp -> "Prop"
+      | InSet -> "Set"
+      | InType -> "Type"
+    end
+  | Cast _ -> "cast"
+  | Prod (n, tp1, tp2) ->
+    let stp1 = str_of_c (kind_of_term tp1) in
+    let stp2 = str_of_c (kind_of_term tp2) in
+    begin match n with
+      | Anonymous ->
+        sprintf "(%s -> %s)" stp1 stp2
+      | Name id ->
+        sprintf "(%s : %s) -> %s" (string_of_id id) stp1 stp2
+    end
+  | Lambda _ -> "lambda"
+  | LetIn _ -> "let in"
+  | App (x, xs) ->
+    let sx = str_of_c (kind_of_term x) in
+    let sxs = Array.map (fun c -> str_of_c (kind_of_term c)) xs in
+    sprintf "%s %s" sx (concat_string_array sxs)
+  (* | Const cn -> sprintf "[const %s]" (string_of_con cn) *)
+  | Const cn -> sprintf "%s" (string_of_con cn)
+  (* | Ind (mind, _n) -> sprintf "[ind %s]" (string_of_mind mind) *)
+  | Ind (mind, _n) -> string_of_mind mind
+  | Construct _ -> "constructor"
+  | Case _ -> "case"
+  | Fix _ -> "fix"
+  | CoFix _ -> "cofix"
+
+(***************************************************************)
+(* Introductions *)
+
+(* We are only interested in equalities ... *)
+
+(* `@eq tp lhs rhs` as record *)
+type equality_info =
+    { tp  : types
+    ; lhs : constr
+    ; rhs : constr
+    }
+
+type constr_category =
+  | Equality of Names.name * equality_info * types
+  | Block
+  | Product
+  | Unknown
+
+let name_of_eq : string =
+  "Coq.Init.Logic.eq"
+
+let name_of_block : string =
+  "Equations.DepElim.block"
+
+let is_ind_equality : constr -> bool =
+  fun c ->
+    match kind_of_term c with
+      | Ind (mind, _n) when name_of_eq = string_of_mind mind ->
+        true
+      | _ ->
+        false
+
+let is_equality_opt : constr -> equality_info option =
+  fun c ->
+    match kind_of_term c with
+      | App (x, xs) when is_ind_equality x && Array.length xs = 3 ->
+        Some { tp = xs.(0) ; lhs = xs.(1) ; rhs = xs.(2) }
+      | _ ->
+        None
+
+let is_blocked_goal : constr -> bool =
+  fun c ->
+    match kind_of_term c with
+      | Const cn when name_of_block = string_of_con cn ->
+        true
+      | _ ->
+        false
+
+let test_constr : (constr, types) kind_of_term -> constr_category = function
+  | Prod (n, tp1, tp2) ->
+    begin match is_equality_opt tp1 with
+      | Some eq_info ->
+        Equality(n, eq_info, tp2)
+      | None ->
+        Product
+    end
+  | App (x, xs) when is_blocked_goal x ->
+    Block
+  | _ ->
+    Unknown
+
+let fresh_id = ref 1
+let fresh_base = "HW"
+
+let gen_fresh_name () =
+  let n = !fresh_id in
+  let () = incr fresh_id in
+  id_of_string (fresh_base ^ string_of_int n)
+
+(* the `simplify_one_dep_elim` tactic *)
+
+(* let revert_until : tactic = tac_of_string "revert_until" *)
+
+let is_variable : constr -> identifier option =
+  fun c ->
+    match kind_of_term c with
+      | Var id ->
+        Some id
+      | _ ->
+        None
+
+let noconf_ref : identifier -> tactic =
+  fun id ->
+    tac_of_string "noconf_ref" [IntroPattern (dummy_loc, Genarg.IntroIdentifier id)]
+
+let revert_until : identifier -> tactic =
+  fun id ->
+    tac_of_string "revert_until" [IntroPattern (dummy_loc, Genarg.IntroIdentifier id)]
+
+let wjzz_eq_case : Names.name -> equality_info -> types -> identifier -> tactic =
+  fun n eqinfo tp2 id ->
+    match is_variable eqinfo.lhs , is_variable eqinfo.rhs with
+      | Some x , _ ->
+        let () = eprintf "Variable %s\n" (string_of_id x) in
+        (* tclIDTAC gl *)
+        tclTHENLIST
+          [ Hiddentac.h_move true x  (MoveBefore id)
+          ; Hiddentac.h_move true id (MoveBefore x)
+          ; revert_until x
+          ; Hiddentac.h_revert [ x ]
+          ; tclIDTAC_MESSAGE (str "hello3")
+          ; Tacmach.refine (mkVar (id_of_string "solution_left"))
+          (* ; refine_tac (Evd.open_constr) *)
+          (* h_apply false (mkVar (id_of_string "solution_left"), []) None *)
+          ; tclIDTAC_MESSAGE (str "hello4")
+          ]
+      | None, Some y ->
+        let () = eprintf "Variable %s\n" (string_of_id y) in
+        Tacmach.refine (mkVar (id_of_string "solution_right"))
+        (* tclIDTAC gl *)
+      | None , None ->
+        tclIDTAC
+
+let wjzz : constr -> tactic =
+  fun c ->
+    let ck = kind_of_term c in
+    let () = eprintf "     %s\n" (str_of_c ck) in
+    match test_constr ck with
+      | Equality (n, eq, tp2) ->
+        let () = eprintf "equality found!\n" in
+        let id = gen_fresh_name () in
+        tclTHEN (Hiddentac.h_intro id)
+          (* (noconf_ref id) *)
+          (wjzz_eq_case n eq tp2 id)
+
+      | Product ->
+        let id = gen_fresh_name () in
+        Hiddentac.h_intro id
+
+      | Block ->
+        let () = eprintf "blocked!\n" in
+        failwith "BLOCKED"
+
+      | Unknown ->
+        (* do nothing? maybe we should always try intro *)
+        tclIDTAC
+
+TACTIC EXTEND wjzz_test
+[ "wjzz_simplify_one_dep_elim" constr(c) ] -> [ wjzz c ]
+END
