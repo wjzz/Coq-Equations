@@ -445,38 +445,40 @@ Ltac revert_blocking_until id :=
       | _ => block_equality id' ; revert id' ; revert_blocking_until id
     end).
 
-Ltac simplify_one_dep_elim_term c :=
+Ltac simplify_one_dep_elim_term_old c :=
   match c with
     (* | @JMeq _ _ _ _ -> _ => refine (@simplification_heq _ _ _ _ _) *)
     (* | ?t = ?t -> _ => intros _ || apply simplification_K_dec || refine (@simplification_K _ t _ _) *)
-    (* | (@existT ?A ?P ?n ?x) = (@existT ?A ?P ?n ?y) -> ?B => *)
-    (*   match goal with *)
-    (*     | _ : x = y |- _ => intro *)
-    (*     | _ => *)
-    (*       apply (simplification_existT2_dec (A:=A) (P:=P) (B:=B) n x y) || *)
-    (*         refine (@simplification_existT2 _ _ _ _ _ _ _) *)
-    (*   end *)
-    (* | eq (existT _ ?p _) (existT _ ?q _) -> _ => *)
-    (*   match goal with *)
-    (*     | _ : p = q |- _ => intro *)
-    (*     | _ => refine (@simplification_existT1 _ _ _ _ _ _ _ _) *)
-    (*   end *)
+    | (@existT ?A ?P ?n ?x) = (@existT ?A ?P ?n ?y) -> ?B =>
+      idtac "HELLO";
+      match goal with
+        | _ : x = y |- _ => intro
+        | _ =>
+          apply (simplification_existT2_dec (A:=A) (P:=P) (B:=B) n x y) ||
+            refine (@simplification_existT2 _ _ _ _ _ _ _)
+      end
+    | eq (existT _ ?p _) (existT _ ?q _) -> _ =>
+      idtac "HELLO2";
+      match goal with
+        | _ : p = q |- _ => intro
+        | _ => refine (@simplification_existT1 _ _ _ _ _ _ _ _)
+      end
     (* wjzz: crucial case *)
     | forall H : ?x = ?y, _ => (* variables case *)
       (let hyp := fresh H in intros hyp ;
         move hyp before x ; move x before hyp; revert_blocking_until x; revert x;
           (match goal with
-            | |- let x := _ in _ = _ -> @?B x =>
-               refine (@solution_left_let _ B _ _ _)
-             | _ => refine (@solution_left _ _ _ _) || refine (@solution_left_dep _ _ _ _)
-           end)) ||
-      (let hyp := fresh "Heq" in intros hyp ;
-        move hyp before y ; move y before hyp; revert_blocking_until y; revert y;
-          (match goal with
-             | |- let x := _ in _ = _ -> @?B x =>
-               refine (@solution_right_let _ B _ _ _)
-             | _ => refine (@solution_right _ _ _ _) || refine (@solution_right_dep _ _ _ _)
-           end))
+            (* | |- let x := _ in _ = _ -> @?B x => *)
+            (*    refine (@solution_left_let _ B _ _ _) *)
+             | _ => refine (@solution_left _ _ _ _) (* || refine (@solution_left_dep _ _ _ _) *)
+           end)) (* || *)
+      (* (let hyp := fresh "Heq" in intros hyp ; *)
+      (*   move hyp before y ; move y before hyp; revert_blocking_until y; revert y; *)
+      (*     (match goal with *)
+      (*        | |- let x := _ in _ = _ -> @?B x => *)
+      (*          refine (@solution_right_let _ B _ _ _) *)
+      (*        | _ => refine (@solution_right _ _ _ _) || refine (@solution_right_dep _ _ _ _) *)
+      (*      end)) *)
     (* | @eq ?A ?t ?u -> ?P => let hyp := fresh in intros hyp ; noconf_ref hyp *)
     (* | ?f ?x = ?g ?y -> _ => let H := fresh in progress (intros H ; injection H ; clear H) *)
     (* | ?t = ?u -> _ => let hyp := fresh in *)
@@ -489,7 +491,7 @@ Ltac simplify_one_dep_elim_term c :=
     (* | _ -> ?B => let ty := type of B in (* Works only with non-dependent products *) *)
     (*   intro || (let H := fresh in intro H) *)
     (* | forall x, _ => *)
-    (*   let H := fresh x in intro H *)
+    (*   let H := fresh x in intro  *)
     (* wjzz: crucial case *)
     | _ => intro
 
@@ -499,49 +501,39 @@ Ltac simplify_one_dep_elim_term c :=
     (* | _ -> _ => intro *)
   end.
 
-(* wjzz: for testing the OCaml tactic *)
+(* simplfied version for testing and analysis *)
 
-Ltac simplify_one_dep_elim_term c::=
+Ltac simplify_one_dep_elim_term_old_verbose c :=
+  match c with
+    | (@existT ?A ?P ?n ?x) = (@existT ?A ?P ?n ?y) -> ?B =>
+      idtac "HELLO";
+      match goal with
+        | _ : x = y |- _ => intro
+        | _ =>
+          apply (simplification_existT2_dec (A:=A) (P:=P) (B:=B) n x y) ||
+            refine (@simplification_existT2 _ _ _ _ _ _ _)
+      end
+    | eq (existT _ ?p _) (existT _ ?q _) -> _ =>
+      idtac "HELLO2";
+      match goal with
+        | _ : p = q |- _ => intro
+        | _ => refine (@simplification_existT1 _ _ _ _ _ _ _ _)
+      end
+    | forall H : ?x = ?y, _ => (* variables case *)
+      (let hyp := fresh H in intros hyp ;
+       move hyp before x ; move x before hyp; revert_blocking_until x; revert x;          idtac "done with moving";
+       refine (@solution_left _ _ _ _);
+       idtac "done with refine")
+    | block ?T => fail 1 (* Do not put any part of the rhs in the hyps *)
+    | _ => intro
+  end.
 
-     (* match c with *)
-     (*   | forall H : ?x = ?y, _ => (* variables case *) *)
-     (*     (let hyp := fresh H in intros hyp ; *)
-     (*      move hyp before x ; move x before hyp; revert_blocking_until x; revert x; *)
-     (*      (match goal with *)
-     (*         | |- let x := _ in _ = _ -> @?B x => *)
-     (*           refine (@solution_left_let _ B _ _ _) *)
-     (*         | _ => refine (@solution_left _ _ _ _) || refine (@solution_left_dep _ _ _ _) *)
-     (*       end))  *)
-     (*       || *)
-     (*       (let hyp := fresh "Heq" in intros hyp ; *)
-     (*        move hyp before y ; move y before hyp; revert_blocking_until y; revert y; *)
-     (*        (match goal with *)
-     (*           | |- let x := _ in _ = _ -> @?B x => *)
-     (*             refine (@solution_right_let _ B _ _ _) *)
-     (*           | _ => refine (@solution_right _ _ _ _) || refine (@solution_right_dep _ _ _ _) *)
-     (*         end)) *)
-     (* end *)
-     (* || *)
-     (* match c with *)
-     (*   | forall H : ?x = ?y, _ => (* variables case *) *)
-     (*     (let hyp := fresh H in intros hyp ; *)
-     (*      move hyp before x ; move x before hyp; revert_blocking_until x; revert x; *)
-     (*      (match goal with *)
-     (*         | |- let x := _ in _ = _ -> @?B x => *)
-     (*           refine (@solution_left_let _ B _ _ _) *)
-     (*         | _ => apply solution_left || apply solution_left_dep *)
-     (*       end)) *)
-     (*       || *)
-     (*       (let hyp := fresh "Heq" in intros hyp ; *)
-     (*        move hyp before y ; move y before hyp; revert_blocking_until y; revert y; *)
-     (*        (match goal with *)
-     (*           | |- let x := _ in _ = _ -> @?B x => *)
-     (*             refine (@solution_right_let _ B _ _ _) *)
-     (*           | _ => apply solution_right || apply solution_right_dep *)
-     (*         end)) *)
-     (* end *)
-     (* || *)
-     wjzz_simplify_one_dep_elim c.
+(* wjzz: wrapper for testing the OCaml tactic *)
+
+Ltac simplify_one_dep_elim_term c:=
+  idtac c;
+  (* wjzz_simplify_one_dep_elim c. *)
+  simplify_one_dep_elim_term_old_verbose c.
 
 Ltac simplify_one_dep_elim :=
   match goal with

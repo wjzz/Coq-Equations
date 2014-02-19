@@ -395,7 +395,7 @@ let rec str_of_c : (constr, types) kind_of_term -> string = function
   | LetIn _ -> "let in"
   | App (x, xs) ->
     let sx = str_of_c (kind_of_term x) in
-    let sxs = Array.map (fun c -> str_of_c (kind_of_term c)) xs in
+    let sxs = Array.map (fun c -> "(" ^ str_of_c (kind_of_term c) ^ ")") xs in
     sprintf "%s %s" sx (concat_string_array sxs)
   (* | Const cn -> sprintf "[const %s]" (string_of_con cn) *)
   | Const cn -> simplify_ind_name (string_of_con cn)
@@ -422,6 +422,8 @@ type equality_info =
     ; rhs : constr
     }
 
+(* `@existsT A P n x` as record *)
+
 type constr_category =
   | Equality of Names.name * equality_info * types
   | Block
@@ -433,6 +435,19 @@ let name_of_eq : string =
 
 let name_of_block : string =
   "Equations.DepElim.block"
+
+let name_of_sigT : string =
+  "Coq.Init.Specif.sigT"
+
+(* term categorization *)
+
+let is_variable : constr -> identifier option =
+  fun c ->
+    match kind_of_term c with
+      | Var id ->
+        Some id
+      | _ ->
+        None
 
 let is_ind_equality : constr -> bool =
   fun c ->
@@ -471,6 +486,8 @@ let test_constr : (constr, types) kind_of_term -> constr_category = function
   | _ ->
     Unknown
 
+(* fresh name generation *)
+
 let fresh_id = ref 1
 let fresh_base = "HW"
 
@@ -479,50 +496,40 @@ let gen_fresh_name () =
   let () = incr fresh_id in
   id_of_string (fresh_base ^ string_of_int n)
 
-(* the `simplify_one_dep_elim` tactic *)
+(* references to existing tactics *)
 
-(* let revert_until : tactic = tac_of_string "revert_until" *)
-
-let is_variable : constr -> identifier option =
-  fun c ->
-    match kind_of_term c with
-      | Var id ->
-        Some id
-      | _ ->
-        None
-
-let noconf_ref : identifier -> tactic =
-  fun id ->
-    tac_of_string "noconf_ref" [IntroPattern (dummy_loc, Genarg.IntroIdentifier id)]
-
-let revert_blocking_until : identifier -> tactic =
-  fun id ->
-    tac_of_string "revert_blocking_until" 
+let build_unary_tactic : string -> (identifier -> tactic) =
+  fun tac_name id ->
+    tac_of_string tac_name
       [IntroPattern (dummy_loc, Genarg.IntroIdentifier id)]
 
-let build_lemma_constant : string -> constant =
-  fun lemma_name ->
+let noconf_ref : identifier -> tactic =
+  build_unary_tactic "noconf_ref" 
+
+let revert_blocking_until : identifier -> tactic =
+  build_unary_tactic "revert_blocking_until" 
+
+(* Fully? qualified constant builder *)
+(* E.g. build_constant ["A","B","C"] "lemma" gives a constant
+   eqv. to "A.B.C.lemma".
+
+   Note: it might not always work, as we set dir_path to empty.
+*)
+
+let build_constant : string list -> string -> constant =
+  fun module_names lemma_name ->
     let lemma_label = Names.mk_label lemma_name in
     let dir_path = Names.empty_dirpath in
-    let module_path = Names.MPfile 
-      (Names.make_dirpath [ id_of_string "DepElim" ; id_of_string "Equations" ]) in
+    let inner_dir_path = List.rev_map Names.id_of_string module_names in
+    let module_path = Names.MPfile (Names.make_dirpath inner_dir_path) in
     Names.make_con module_path dir_path lemma_label
 
-let get_evars : constr array =
-  Array.map 
-    (fun i -> Term.mkEvar (existential_of_int i, [||])) 
-    [| 1;2;3;4 |]
-      
-let wjzz_refine : tactic = 
-  fun g ->
-    try 
-      let tmFun = mkConst (build_lemma_constant "solution_left") in
-      Hiddentac.h_apply true false [ dummy_loc, (tmFun, NoBindings) ] g
-      (* let tm = mkApp (tmFun, get_evars) in *)
-      (* (\* let gs = Tacmach.refine tm g in *\) *)
-      (* let gs = Refine.refine (Evd.empty, tm) g in *)
-      (* let () = eprintf "Result goal no: %d%!" (List.length gs.it) in *)
-      (* gs *)
+(* A wrapper to help analyze what is going on when something fails *)
+
+let analyze_exceptions : 'a Lazy.t -> 'a =
+  fun a ->
+    try
+      Lazy.force a
     with
       | Refiner.FailError (l, s) as e -> 
 	let s = (string_of_ppcmds (Lazy.force s)) in
@@ -539,84 +546,92 @@ let wjzz_refine : tactic =
 	let s = Printexc.to_string e in 
 	(eprintf "Raised an exception!\n%s%!" s; raise e)
 
+(* the `simplify_one_dep_elim` tactic *)
+	  
+let wjzz_refine : tactic = 
+  fun g ->
+    analyze_exceptions (lazy
+      let constant = build_constant ["Equations";"DepElim"] "solution_left" in
+      let tmFun = mkConst constant in
+      Hiddentac.h_apply true true [ dummy_loc, (tmFun, NoBindings) ] g
+    )
+
+(*
+(Coq.Init.Logic.eq Coq.Init.Specif.sigT A lambda constructor A lambda x0 x constructor A lambda x1 y -> Coq.Init.Logic.False)
+l = constructor A lambda x0 x
+r = constructor A lambda x1 y
+HELLO2
+*)
+(*
+(Coq.Init.Logic.eq Coq.Init.Specif.sigT A lambda constructor A lambda x1 x constructor A lambda x1 y -> Coq.Init.Logic.False)
+l = constructor A lambda x1 x
+r = constructor A lambda x1 y
+HELLO
+*)
+(* simplification_existT1 simplification_existT2 simplification_existT2_dec *)
+
 let wjzz_eq_case : Names.name -> equality_info -> types -> identifier -> tactic =
   fun n eqinfo tp2 id ->
     match is_variable eqinfo.lhs , is_variable eqinfo.rhs with
       | Some x , _ ->
-        let () = eprintf "Variable %s\n%!" (string_of_id x) in
-        (* tclIDTAC gl *)
         tclTHENLIST
-          [ Hiddentac.h_move true x  (MoveBefore id)
-          ; Hiddentac.h_move true id (MoveBefore x)
+          [ Hiddentac.h_move true id (MoveBefore x)
+	  ; Hiddentac.h_move true x  (MoveBefore id)
           ; revert_blocking_until x
           ; Hiddentac.h_revert [ x ]
-          ; tclIDTAC_MESSAGE (str "  hello3\n")
-	  (* wjzz: this is the key point for now *)
+	  ; tclIDTAC_MESSAGE (str "Done with reverting\n")
 	  ; wjzz_refine
-          (* ; Tacmach.refine (mkVar (id_of_string "solution_left")) *)
-          (* ; refine_tac (Evd.open_constr) *)
-          (* h_apply false (mkVar (id_of_string "solution_left"), []) None *)
-          ; tclIDTAC_MESSAGE (str "  hello4\n")
+	  ; tclIDTAC_MESSAGE (str "Done with moving\n")
           ]
       | None, Some y ->
-        let () = eprintf "Variable %s\n" (string_of_id y) in
+	(* TODO? *)
         Tacmach.refine (mkVar (id_of_string "solution_right"))
-        (* tclIDTAC gl *)
       | None , None ->
+	let () = eprintf "l = %s\nr = %s\n%!"
+	  (str_of_c (kind_of_term eqinfo.lhs))
+	  (str_of_c (kind_of_term eqinfo.rhs)) in
         tclIDTAC
 
-let wjzz : constr -> tactic =
-  fun c ->
-    let ck = kind_of_term c in
-    let () = eprintf "     %s\n" (str_of_c ck) in
-    match test_constr ck with
-      | Equality (n, eq, tp2) ->
-        let () = eprintf "equality found!\n" in
-        let id = gen_fresh_name () in
-        tclTHEN (Hiddentac.h_intro id)
-          (* (noconf_ref id) *)
-          (wjzz_eq_case n eq tp2 id)
-
-      | Product ->
-        let id = gen_fresh_name () in
-        Hiddentac.h_intro id
-
-      | Block ->
-        let () = eprintf "blocked!\n" in
-        failwith "BLOCKED"
-
-      | Unknown ->
-        (* do nothing? maybe we should always try intro *)
-        tclIDTAC
+let wjzz_print_arg : (constr, types) kind_of_term -> unit = 
+  fun ck -> 
+    let () = eprintf "%s\n%!" (str_of_c ck) in
+    let () = match test_constr ck with
+      | Equality (n, eqinfo, tp2) ->
+	eprintf "l = %s\nr = %s\n%!"
+	  (str_of_c (kind_of_term eqinfo.lhs))
+	  (str_of_c (kind_of_term eqinfo.rhs)) 
+      | _ -> 
+	()
+    in
+    ()
 
 let simplify_one : constr -> tactic = 
   fun c ->
     let id = gen_fresh_name () in
     let ck = kind_of_term c in
-    let () = eprintf "%s\n%!" (str_of_c ck) in
+    (* let () = wjzz_print_arg ck in *)
     match test_constr ck with
       | Equality (n, eq, tp2) ->
-        let () = eprintf "equality found!\n" in
+        (* let () = eprintf "equality found!\n" in *)
         let id = gen_fresh_name () in
         tclTHEN (Hiddentac.h_intro id)
-          (* (noconf_ref id) *)
-      	  (* tclIDTAC *)
           (wjzz_eq_case n eq tp2 id)
 
       | Block ->
-        let () = eprintf "blocked!\n" in
-        tclFAIL 0 (str "We are blocked!")
+        tclFAIL 0 (str "Block reached!")
 
-      | Product _ ->
-	(* let () = eprintf "product! \n%!" in p *)
-        let id = gen_fresh_name () in
-        Hiddentac.h_intro id
+      | Product | Unknown ->
+	Hiddentac.h_intro_move None (MoveToEnd true)
 
-      | Unknown ->
-	let () = eprintf "unknown! \n%!" in 
-	tclFAIL 0 (str "No matching case")
+      (* | Product _ | Unknown -> *)
+      (*   let id = gen_fresh_name () in *)
+      (*   Hiddentac.h_intro id *)
+  
+      (* | _ -> tclFAIL 0 (str "nothing") *)
 
-
+      (* | Unknown -> *)
+      (* 	(\* let () = eprintf "unknown! \n%!" in  *\) *)
+      (* 	tclFAIL 0 (str "No matching case") *)
 
 TACTIC EXTEND wjzz_test
 [ "wjzz_simplify_one_dep_elim" constr(c) ] -> [ simplify_one c ]
