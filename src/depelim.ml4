@@ -488,13 +488,18 @@ let test_constr : (constr, types) kind_of_term -> constr_category = function
 
 (* fresh name generation *)
 
-let fresh_id = ref 1
-let fresh_base = "HW"
+module Fresh : sig
+  val gen_identifier : unit -> identifier
+end = 
+struct
+  let fresh_id = ref 1
+  let fresh_base = "HW"
 
-let gen_fresh_name () =
-  let n = !fresh_id in
-  let () = incr fresh_id in
-  id_of_string (fresh_base ^ string_of_int n)
+  let gen_identifier () =
+    let n = !fresh_id in
+    let () = incr fresh_id in
+    id_of_string (fresh_base ^ string_of_int n)
+end
 
 (* references to existing tactics *)
 
@@ -520,55 +525,147 @@ let build_constant : string list -> string -> constant =
   fun module_names lemma_name ->
     let lemma_label = Names.mk_label lemma_name in
     let dir_path = Names.empty_dirpath in
-    let inner_dir_path = List.rev_map Names.id_of_string module_names in
+    let inner_dir_path = List.rev_map Names.id_of_string module_names in 
     let module_path = Names.MPfile (Names.make_dirpath inner_dir_path) in
     Names.make_con module_path dir_path lemma_label
 
 (* A wrapper to help analyze what is going on when something fails *)
+
+let rec explain_exception : exn -> unit =
+  fun e -> 
+    match e with
+      | Refiner.FailError (l, s) as e -> 
+	let s = (string_of_ppcmds (Lazy.force s)) in
+	eprintf "lvl = %d; s = %s\n%!" l s
+      | Compat.Loc.Exc_located (a, e2) as e ->
+	(* let x = a + 1 in  *)
+	let s1 = Printexc.to_string e in 
+	let s2 = Printexc.to_string e2 in 
+      	let () = eprintf "Raised a located exception! %s\n%s\n%!" s1 s2 in
+	explain_exception e2
+      | TypeError (env, err) as e->
+	ppnl (Himsg.explain_type_error env Evd.empty err)
+      | Logic.RefinerError referr as e-> 
+	let s = Printexc.to_string e in 
+	let () = eprintf "Raised an exception!\n%s\n%!" s in
+	ppnl (Himsg.explain_refiner_error referr)
+      | Pretype_errors.PretypeError (evd, env, err) as e ->
+	let s = Printexc.to_string e in 
+	let () = eprintf "Raised a type exception!\n%s\n%!" s in
+	ppnl (Himsg.explain_pretype_error evd env err)	  
+      | e -> 
+	let s = Printexc.to_string e in 
+	eprintf "Raised a generic exception!\n%s\n%!" s
 
 let analyze_exceptions : 'a Lazy.t -> 'a =
   fun a ->
     try
       Lazy.force a
     with
-      | Refiner.FailError (l, s) as e -> 
-	let s = (string_of_ppcmds (Lazy.force s)) in
-	(eprintf "lvl = %d; s = %s\n%!" l s; raise e)
-      | Compat.Loc.Exc_located (a, e2) as e ->
-	(* let x = a + 1 in  *)
-	let s1 = Printexc.to_string e in 
-	let s2 = Printexc.to_string e2 in 
-      	(eprintf "Raised a located exception! %s\n%s\n%!" s1 s2; raise e)
-      | TypeError (env, err) as e->
-	let () = ppnl (Himsg.explain_type_error env Evd.empty err) in
-	raise e
-      | e -> 
-	let s = Printexc.to_string e in 
-	(eprintf "Raised an exception!\n%s%!" s; raise e)
+      | e -> explain_exception e; raise e
 
-(* the `simplify_one_dep_elim` tactic *)
-	  
-let wjzz_refine : tactic = 
-  fun g ->
+(*******************************************************)
+(*          the `simplify_one_dep_elim` tactic         *)
+(*******************************************************)
+
+(** coerces a lemma name into a reference **)
+
+let create_reference_to_lemma : string -> reference =
+  fun lemma ->
+    let qualid = Libnames.qualid_of_ident (id_of_string lemma) in
+    Qualid (dummy_loc, qualid)
+
+(** given f and n builds (f _ _ ... _) [n - number of holes ] **)
+
+let build_application_with_holes : constr_expr -> int -> constr_expr =
+  fun fn hole_num ->
+    let hole = Topconstr.CHole (dummy_loc, None) in
+    let args = Util.list_make hole_num (hole, None) in
+    Topconstr.CApp (dummy_loc, (None, fn), args)
+
+(** given f and n builds (@f _ _ ... _) [n - number of holes ] **)
+
+let build_explicit_app_with_holes : reference -> int -> constr_expr =
+  fun fn hole_num ->
+    let hole = Topconstr.CHole (dummy_loc, None) in
+    let args = Util.list_make hole_num hole in
+    Topconstr.CAppExpl (dummy_loc, (None, fn), args)
+
+(** given lemma name, dummy argument number, and the final type
+    creates the term argument for refine **)
+
+let build_refine_argument : string -> int -> types -> Evd.open_constr = 
+  fun fn_name hole_num goal_type ->
+    let ref_name = create_reference_to_lemma fn_name in
+    let cexpr = build_explicit_app_with_holes ref_name hole_num in
+    let (evd, env) = Lemmas.get_current_context () in
+    let glob_expr = Constrintern.intern_constr evd env cexpr in
+    (evd, Constrintern.interp_casted_constr evd env cexpr goal_type)
+ (* (evd, Constrintern.interp_casted_constr_evars (ref evd) env cexpr goal_type) *)
+    (* Constrintern.interp_open_constr evd env cexpr *)
+    (* (evd, Constrintern.interp_constr evd env cexpr) *)
+
+let build_refine_argument_in_steps : string -> int -> goal sigma -> open_constr =
+  fun fn_name hole_num gl ->
+    let ref_name = create_reference_to_lemma fn_name in
+    let cexpr = build_explicit_app_with_holes ref_name hole_num in
+    let goal_type = pf_concl gl in
+
+    let glob_expr = 
+      Constrintern.intern_gen false Evd.empty Environ.empty_env
+	~allow_patvar:false ~ltacvars:([], []) cexpr in
+    (* let env = pr_env gl in  *)
+    (* let sigma = project gl in  *)
+    (* let ist = failwith "TODO" in *)
+
+    let oconstr : open_constr = Tacinterp.interp_open_constr_wjzz gl glob_expr in
+    (* interp_open_constr (Some goal_type) ist (pf_env gl) (project gl) 
+         (goal_expr, None)  ==>
+       interp_gen (OfType (Some goal_type)) ist 
+         false true false true env sigma (glob_expr, None)
+
+    *)
+    oconstr
+    
+
+(* This approach yields an refiner error:
+
+Constrintern.interp_open_constr evd env cexpr
+*)
+
+(* This approach throws Not_found:
+
+    let evdr = ref evd in 
+    let () = Printf.printf "before intern...\n%!" in
+    let constr = Constrintern.interp_casted_constr_evars evdr env cexpr goal_type in
+    let () = Printf.printf "aftern intern...\n%!" in
+    let () = ppnl (Printer.pr_constr constr) in
+    (!evdr, constr)
+*)
+
+
+(*     let gconstr = Constrintern.intern_constr evd env cexpr in *)
+    
+(*     failwith "TODO" *)
+    (* let ist = Tacinterp.fully_empty_glob_sign in  *)
+    (* let gconstr : glob_constr =  *)
+    (*   Constrintern.intern_gen false ~allow_patvar:false *)
+    (* 	~ltacvars:([],[]) Evd.empty Environ.empty_env cexpr in *)
+    (* let casted_type = Some goal_type in *)
+    (* let gen = Genarg.in_gen (wit_open_constr_gen true) *)
+    (*   (Tacinterp.interp_open_constr (if casted then Some (pf_concl gl) else None) *)
+    (*      ist (pf_env gl) (project gl)) in *)
+    (* gconstr *)
+
+let call_refine : tactic = 
+  fun gl ->
     analyze_exceptions (lazy
-      let constant = build_constant ["Equations";"DepElim"] "solution_left" in
-      let tmFun = mkConst constant in
-      Hiddentac.h_apply true true [ dummy_loc, (tmFun, NoBindings) ] g
+    let () = ppnl (Printer.pr_goal gl) in 
+    let open_constr = build_refine_argument_in_steps 
+      "solution_left" 4 gl in
+    let () = Printf.printf "calling refine...\n" in
+    Refine.refine open_constr gl
     )
-
-(*
-(Coq.Init.Logic.eq Coq.Init.Specif.sigT A lambda constructor A lambda x0 x constructor A lambda x1 y -> Coq.Init.Logic.False)
-l = constructor A lambda x0 x
-r = constructor A lambda x1 y
-HELLO2
-*)
-(*
-(Coq.Init.Logic.eq Coq.Init.Specif.sigT A lambda constructor A lambda x1 x constructor A lambda x1 y -> Coq.Init.Logic.False)
-l = constructor A lambda x1 x
-r = constructor A lambda x1 y
-HELLO
-*)
-(* simplification_existT1 simplification_existT2 simplification_existT2_dec *)
 
 let wjzz_eq_case : Names.name -> equality_info -> types -> identifier -> tactic =
   fun n eqinfo tp2 id ->
@@ -579,9 +676,10 @@ let wjzz_eq_case : Names.name -> equality_info -> types -> identifier -> tactic 
 	  ; Hiddentac.h_move true x  (MoveBefore id)
           ; revert_blocking_until x
           ; Hiddentac.h_revert [ x ]
-	  ; tclIDTAC_MESSAGE (str "Done with reverting\n")
-	  ; wjzz_refine
-	  ; tclIDTAC_MESSAGE (str "Done with moving\n")
+	  ; tclIDTAC_MESSAGE (str "Before refine\n")
+	  ; call_refine
+	  (* ; wjzz_refine *)
+	  ; tclIDTAC_MESSAGE (str "Refine OK\n")
           ]
       | None, Some y ->
 	(* TODO? *)
@@ -607,13 +705,13 @@ let wjzz_print_arg : (constr, types) kind_of_term -> unit =
 
 let simplify_one : constr -> tactic = 
   fun c ->
-    let id = gen_fresh_name () in
+    let id = Fresh.gen_identifier () in
     let ck = kind_of_term c in
     (* let () = wjzz_print_arg ck in *)
     match test_constr ck with
       | Equality (n, eq, tp2) ->
         (* let () = eprintf "equality found!\n" in *)
-        let id = gen_fresh_name () in
+        let id = Fresh.gen_identifier () in
         tclTHEN (Hiddentac.h_intro id)
           (wjzz_eq_case n eq tp2 id)
 
@@ -636,3 +734,25 @@ let simplify_one : constr -> tactic =
 TACTIC EXTEND wjzz_test
 [ "wjzz_simplify_one_dep_elim" constr(c) ] -> [ simplify_one c ]
 END
+
+(* let wjzz_refine : tactic =  *)
+(*   fun g -> *)
+(*     analyze_exceptions (lazy *)
+(*       let constant = build_constant ["Equations";"DepElim"] "solution_left" in *)
+(*       let tmFun = mkConst constant in *)
+(*       Hiddentac.h_apply true true [ dummy_loc, (tmFun, NoBindings) ] g *)
+(*     ) *)
+
+(*
+(Coq.Init.Logic.eq Coq.Init.Specif.sigT A lambda constructor A lambda x0 x constructor A lambda x1 y -> Coq.Init.Logic.False)
+l = constructor A lambda x0 x
+r = constructor A lambda x1 y
+HELLO2
+*)
+(*
+(Coq.Init.Logic.eq Coq.Init.Specif.sigT A lambda constructor A lambda x1 x constructor A lambda x1 y -> Coq.Init.Logic.False)
+l = constructor A lambda x1 x
+r = constructor A lambda x1 y
+HELLO
+*)
+(* simplification_existT1 simplification_existT2 simplification_existT2_dec *)

@@ -449,20 +449,20 @@ Ltac simplify_one_dep_elim_term_old c :=
   match c with
     (* | @JMeq _ _ _ _ -> _ => refine (@simplification_heq _ _ _ _ _) *)
     (* | ?t = ?t -> _ => intros _ || apply simplification_K_dec || refine (@simplification_K _ t _ _) *)
-    | (@existT ?A ?P ?n ?x) = (@existT ?A ?P ?n ?y) -> ?B =>
-      idtac "HELLO";
-      match goal with
-        | _ : x = y |- _ => intro
-        | _ =>
-          apply (simplification_existT2_dec (A:=A) (P:=P) (B:=B) n x y) ||
-            refine (@simplification_existT2 _ _ _ _ _ _ _)
-      end
-    | eq (existT _ ?p _) (existT _ ?q _) -> _ =>
-      idtac "HELLO2";
-      match goal with
-        | _ : p = q |- _ => intro
-        | _ => refine (@simplification_existT1 _ _ _ _ _ _ _ _)
-      end
+    (* | (@existT ?A ?P ?n ?x) = (@existT ?A ?P ?n ?y) -> ?B => *)
+    (*   idtac "HELLO"; *)
+    (*   match goal with *)
+    (*     | _ : x = y |- _ => intro *)
+    (*     | _ => *)
+    (*       apply (simplification_existT2_dec (A:=A) (P:=P) (B:=B) n x y) || *)
+    (*         refine (@simplification_existT2 _ _ _ _ _ _ _) *)
+    (*   end *)
+    (* | eq (existT _ ?p _) (existT _ ?q _) -> _ => *)
+    (*   idtac "HELLO2"; *)
+    (*   match goal with *)
+    (*     | _ : p = q |- _ => intro *)
+    (*     | _ => refine (@simplification_existT1 _ _ _ _ _ _ _ _) *)
+    (*   end *)
     (* wjzz: crucial case *)
     | forall H : ?x = ?y, _ => (* variables case *)
       (let hyp := fresh H in intros hyp ;
@@ -505,20 +505,20 @@ Ltac simplify_one_dep_elim_term_old c :=
 
 Ltac simplify_one_dep_elim_term_old_verbose c :=
   match c with
-    | (@existT ?A ?P ?n ?x) = (@existT ?A ?P ?n ?y) -> ?B =>
-      idtac "HELLO";
-      match goal with
-        | _ : x = y |- _ => intro
-        | _ =>
-          apply (simplification_existT2_dec (A:=A) (P:=P) (B:=B) n x y) ||
-            refine (@simplification_existT2 _ _ _ _ _ _ _)
-      end
-    | eq (existT _ ?p _) (existT _ ?q _) -> _ =>
-      idtac "HELLO2";
-      match goal with
-        | _ : p = q |- _ => intro
-        | _ => refine (@simplification_existT1 _ _ _ _ _ _ _ _)
-      end
+    (* | (@existT ?A ?P ?n ?x) = (@existT ?A ?P ?n ?y) -> ?B => *)
+    (*   idtac "HELLO"; *)
+    (*   match goal with *)
+    (*     | _ : x = y |- _ => intro *)
+    (*     | _ => *)
+    (*       apply (simplification_existT2_dec (A:=A) (P:=P) (B:=B) n x y) || *)
+    (*         refine (@simplification_existT2 _ _ _ _ _ _ _) *)
+    (*   end *)
+    (* | eq (existT _ ?p _) (existT _ ?q _) -> _ => *)
+    (*   idtac "HELLO2"; *)
+    (*   match goal with *)
+    (*     | _ : p = q |- _ => intro *)
+    (*     | _ => refine (@simplification_existT1 _ _ _ _ _ _ _ _) *)
+    (*   end *)
     | forall H : ?x = ?y, _ => (* variables case *)
       (let hyp := fresh H in intros hyp ;
        move hyp before x ; move x before hyp; revert_blocking_until x; revert x;          idtac "done with moving";
@@ -532,8 +532,8 @@ Ltac simplify_one_dep_elim_term_old_verbose c :=
 
 Ltac simplify_one_dep_elim_term c:=
   idtac c;
-  (* wjzz_simplify_one_dep_elim c. *)
-  simplify_one_dep_elim_term_old_verbose c.
+  wjzz_simplify_one_dep_elim c.
+  (* simplify_one_dep_elim_term_old_verbose c. *)
 
 Ltac simplify_one_dep_elim :=
   match goal with
