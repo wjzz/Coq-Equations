@@ -583,6 +583,21 @@ let build_explicit_app_with_holes : reference -> int -> constr_expr =
     let args = Util.list_make hole_num hole in
     Topconstr.CAppExpl (dummy_loc, (None, fn), args)
 
+(** translates the given glob_constr into an open_constr.
+    Code adapted and specialized from Tacinterp.interp_gen **)
+
+let interp_open_constr : goal sigma -> glob_constr -> open_constr =
+  fun gl glob_expr ->
+    let goal_type = pf_concl gl in
+    let env = pf_env gl in
+    let sigma = project gl in
+    let vars = ([], []) in
+    let evdc =
+      Pretyping.Default.understand_ltac ~resolve_classes:true true 
+	sigma env vars (OfType (Some goal_type)) glob_expr in
+    Pretyping.solve_remaining_evars false true 
+      Pfedit.solve_by_implicit_tactic env sigma evdc
+
 (** given lemma name, dummy argument number, and the final type
     creates the term argument for refine **)
 
@@ -595,7 +610,7 @@ let build_refine_argument_in_steps : string -> int -> goal sigma -> open_constr 
     let glob_expr = 
       Constrintern.intern_gen false Evd.empty Environ.empty_env
 	~allow_patvar:false ~ltacvars:([], []) cexpr in
-    let oconstr : open_constr = Tacinterp.interp_open_constr_wjzz gl glob_expr in
+    let oconstr = interp_open_constr gl glob_expr in
     oconstr
 
 let call_refine : tactic = 
