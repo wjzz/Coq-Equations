@@ -423,7 +423,7 @@ type equality_info =
     }
 
 type equality_case = 
-  | Same of constr                       (* t = t *)
+  (* | Same of constr                       (\* t = t *\) *)
   | ExistT                               (* existT ... = existT ... *)
   | VarLeft  of identifier               (* x = ... *)
   | VarRight of identifier               (* ... = y *)
@@ -669,14 +669,20 @@ let build_explicit_app_with_holes2 : reference -> constr_expr -> constr_expr =
 
 let build_refine_argument_in_steps2 : constr_expr -> string -> goal sigma -> open_constr =
   fun t fn_name gl ->
+    let () = Printf.printf "*** starting refine\n%!" in
     let ref_name = create_reference_to_lemma fn_name in
     let cexpr = build_explicit_app_with_holes2 ref_name t in
     let goal_type = pf_concl gl in
-
+    let () = Printf.printf "*** before refine\n%!" in
+    (** wjzz: the error is here! **)
+    let env = pf_env gl in 
     let glob_expr = 
-      Constrintern.intern_gen false Evd.empty Environ.empty_env
+      (* Constrintern.intern_gen false Evd.empty Environ.empty_env *)
+      Constrintern.intern_gen false Evd.empty env
 	~allow_patvar:false ~ltacvars:([], []) cexpr in
+    let () = Printf.printf "*** after refine\n%!" in
     let oconstr = interp_open_constr gl glob_expr in
+    let () = Printf.printf "*** finished refine\n%!" in
     oconstr
 
 let call_refine2 : constr_expr -> string -> tactic = 
@@ -697,12 +703,19 @@ let simplify_existT : equality_info -> tactic =
       ; tclIDTAC_MESSAGE (str "Refine successful 2!\n")
       ]
 
+let sides_equal_opt : equality_info -> constr option =
+  fun eqinfo ->
+    if Term.eq_constr eqinfo.lhs eqinfo.rhs then
+      Some eqinfo.lhs
+    else
+      None
+
 let categorize_equality : equality_info -> equality_case =
   fun eqinfo ->
     (* This control flow is a bit strange, but at least it's linear *)
     match is_variable eqinfo.lhs , is_variable eqinfo.rhs with
-      | _ when Term.eq_constr eqinfo.lhs eqinfo.rhs ->
-	Same eqinfo.lhs
+      (* | _ when Term.eq_constr eqinfo.lhs eqinfo.rhs -> *)
+      (* 	Same eqinfo.lhs *)
       | Some x, Some y ->
 	VarBoth (x,y)
       | Some x , None ->
@@ -741,32 +754,37 @@ let simplify_equality_right : identifier -> equality_info -> tactic =
       ; tclIDTAC_MESSAGE (str "Refine successful!\n")
       ]
 
+let simplify_when_equal : constr -> tactic =
+  fun t gl ->
+    let () = ppnl (Printer.pr_goal gl) in
+    let t' = Constrextern.extern_constr true (pf_env gl) t in
+    tclORELSE0 
+      (Hiddentac.h_intro_patterns [ (dummy_loc, IntroWildcard) ])
+      (tclTHEN 
+	 (tclTHEN 
+	    (tclIDTAC_MESSAGE (str "--- K is OK???\n"))
+	    (* (call_refine "simplification_K" 4)) *)
+	 (call_refine2 t' "simplification_K"))
+	 (tclIDTAC_MESSAGE (str "--- K is OK\n")))
+       gl
+
 
 let simplify_equality : equality_info -> tactic =
   fun eqinfo ->
+    tclORELSE (
+      match sides_equal_opt eqinfo with
+	| None -> tclIDTAC
+	| Some t -> simplify_when_equal t 
+    )
+    (
     match categorize_equality eqinfo with
-      | Same t ->
-	fun gl ->
-	  let () = ppnl (Printer.pr_goal gl) in
-	  let () = Printf.printf "---externing...\n%!" in
-	  let t' = Constrextern.extern_constr true (pf_env gl) t in
-	  let () = Printf.printf "---externing done...\n%!" in
-	  let () = Printf.printf "+++from %s to %s\n%!" 
-	    (string_of_ppcmds (Printer.pr_constr t))
-	    (string_of_ppcmds (Ppconstr.pr_constr_expr t')) in
-	  tclORELSE0 
-	    (Hiddentac.h_intro_patterns [ (dummy_loc, IntroWildcard) ])
-	    (tclTHEN 
-	       (tclTHEN 
-		  (tclIDTAC_MESSAGE (str "--- K is OK???\n"))
-		  (* (call_refine "simplification_K" 4)) *)
-		  (call_refine2 t' "simplification_K"))
-	       (tclIDTAC_MESSAGE (str "--- K is OK\n")))
-	    gl
+      (* | Same t -> *)
+      (* 	simplify_when_equal t *)
       | ExistT ->
 	simplify_existT eqinfo
       | VarBoth (x,y) ->
-	tclORELSE0 (simplify_equality_left x eqinfo)
+	tclORELSE0 
+	  (simplify_equality_left  x eqinfo)
 	  (simplify_equality_right y eqinfo)
       | VarLeft x ->
 	simplify_equality_left x eqinfo
@@ -775,8 +793,8 @@ let simplify_equality : equality_info -> tactic =
       | Other ->
         let id = Fresh.gen_identifier () in
 	tclTHEN (Hiddentac.h_intro id)
-	  (noconf_ref id)
-	  
+	  (tclTRY (noconf_ref id))
+    )	  
 (* let wjzz_print_arg : (constr, types) kind_of_term -> unit =  *)
 (*   fun ck ->  *)
 (*     let () = eprintf "%s\n%!" (str_of_c ck) in *)

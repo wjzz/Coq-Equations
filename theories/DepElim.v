@@ -504,22 +504,24 @@ Ltac simplify_one_dep_elim_term_old c :=
 Ltac simplify_one_dep_elim_term_verbose c :=
   match c with
     | @JMeq _ _ _ _ -> _ =>     (* done *)
-       refine (@simplification_heq _ _ _ _ _)
-    (* | ?t = ?t -> _ => *)
-    (*    intros _ || refine (@simplification_K _ t _ _) *)
+       refine (@simplification_heq _ _ _ _ _) || fail 1
+    | ?t = ?t -> _ =>
+       (intros _ || refine (@simplification_K _ _ _ _)) || fail 1
+       (* intros _ || refine (@simplification_K _ t _ _) *)
     | (@existT ?A ?P ?n ?x) = (@existT ?A ?P ?n ?y) -> ?B =>
-       refine (@simplification_existT2 _ _ _ _ _ _ _)
+       refine (@simplification_existT2 _ _ _ _ _ _ _) || fail 1
     | eq (existT _ ?p _) (existT _ ?q _) -> _ =>
-       refine (@simplification_existT1 _ _ _ _ _ _ _ _)
+       refine (@simplification_existT1 _ _ _ _ _ _ _ _) || fail 1
     | forall H : ?x = ?y, _ =>
-      (let hyp := fresh H in intro hyp ;
+      ((let hyp := fresh H in intro hyp ;
         move hyp before x ; move x before hyp; revert_blocking_until x; revert x;
         refine (@solution_left _ _ _ _)) ||
       (let hyp := fresh H in intro hyp ;
         move hyp before y ; move y before hyp; revert_blocking_until y; revert y;
-        refine (@solution_right _ _ _ _) || refine (@solution_right_dep _ _ _ _))
+        refine (@solution_right _ _ _ _) || refine (@solution_right_dep _ _ _ _)))
+
     | @eq ?A ?t ?u -> ?P =>
-       let hyp := fresh in intro hyp ; noconf_ref hyp
+       (let hyp := fresh in intro hyp ; try (noconf_ref hyp)) || fail 1
     | block ?T => 
        fail 1 (* Do not put any part of the rhs in the hyps *)
     | _ => 
@@ -529,7 +531,7 @@ Ltac simplify_one_dep_elim_term_verbose c :=
 (* wjzz: wrapper for testing the OCaml tactic *)
 
 Ltac simplify_one_dep_elim_term c:=
-  idtac c;
+  (* idtac c; *)
   wjzz_simplify_one_dep_elim c.
   (* simplify_one_dep_elim_term_verbose c. *)
   (* simplify_one_dep_elim_term_old c. *)
