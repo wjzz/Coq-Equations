@@ -447,8 +447,10 @@ Ltac revert_blocking_until id :=
 
 Ltac simplify_one_dep_elim_term_old c :=
   match c with
-    | @JMeq _ _ _ _ -> _ => refine (@simplification_heq _ _ _ _ _)
-    | ?t = ?t -> _ => intros _ || apply simplification_K_dec || refine (@simplification_K _ t _ _)
+    | @JMeq _ _ _ _ -> _ => 
+      refine (@simplification_heq _ _ _ _ _)
+    | ?t = ?t -> _ => 
+      intros _ || apply simplification_K_dec || refine (@simplification_K _ t _ _)
     | (@existT ?A ?P ?n ?x) = (@existT ?A ?P ?n ?y) -> ?B =>
       match goal with
         | _ : x = y |- _ => intro
@@ -461,14 +463,13 @@ Ltac simplify_one_dep_elim_term_old c :=
         | _ : p = q |- _ => intro
         | _ => refine (@simplification_existT1 _ _ _ _ _ _ _ _)
       end
-    (* wjzz: crucial case *)
     | forall H : ?x = ?y, _ => (* variables case *)
       (let hyp := fresh H in intros hyp ;
         move hyp before x ; move x before hyp; revert_blocking_until x; revert x;
           (match goal with
-            (* | |- let x := _ in _ = _ -> @?B x => *)
-            (*    refine (@solution_left_let _ B _ _ _) *)
-             | _ => refine (@solution_left _ _ _ _) (* || refine (@solution_left_dep _ _ _ _) *)
+            | |- let x := _ in _ = _ -> @?B x =>
+               refine (@solution_left_let _ B _ _ _)
+             | _ => refine (@solution_left _ _ _ _) || refine (@solution_left_dep _ _ _ _)
            end)) ||
       (let hyp := fresh "Heq" in intros hyp ;
         move hyp before y ; move y before hyp; revert_blocking_until y; revert y;
@@ -478,19 +479,17 @@ Ltac simplify_one_dep_elim_term_old c :=
              | _ => refine (@solution_right _ _ _ _) || refine (@solution_right_dep _ _ _ _)
            end))
     | @eq ?A ?t ?u -> ?P => let hyp := fresh in intros hyp ; noconf_ref hyp
-    (* | ?f ?x = ?g ?y -> _ => let H := fresh in progress (intros H ; injection H ; clear H) *)
-    (* | ?t = ?u -> _ => let hyp := fresh in *)
-    (*   intros hyp ; elimtype False ; discriminate *)
-    (* | ?x = ?y -> _ => let hyp := fresh in *)
-    (*   intros hyp ; (try (clear hyp ; (* If non dependent, don't clear it! *) fail 1)) ; *)
-    (*     case hyp (* ; clear hyp *) *)
-    (* wjzz: crucial case *)
+    | ?f ?x = ?g ?y -> _ => let H := fresh in progress (intros H ; injection H ; clear H)
+    | ?t = ?u -> _ => let hyp := fresh in
+      intros hyp ; elimtype False ; discriminate
+    | ?x = ?y -> _ => let hyp := fresh in
+      intros hyp ; (try (clear hyp ; (* If non dependent, don't clear it! *) fail 1)) ;
+        case hyp (* ; clear hyp *)
     | block ?T => fail 1 (* Do not put any part of the rhs in the hyps *)
-    (* | _ -> ?B => let ty := type of B in (* Works only with non-dependent products *) *)
-    (*   intro || (let H := fresh in intro H) *)
-    (* | forall x, _ => *)
-    (*   let H := fresh x in intro *)
-    (* wjzz: crucial case *)
+    | _ -> ?B => let ty := type of B in (* Works only with non-dependent products *)
+      intro || (let H := fresh in intro H)
+    | forall x, _ =>
+      let H := fresh x in intro
     | _ => intro
 
     (* | _ -> ?T => intro; try (let x := type of T in idtac) *)
@@ -499,15 +498,15 @@ Ltac simplify_one_dep_elim_term_old c :=
     (* | _ -> _ => intro *)
   end.
 
-(* simplfied version for testing and analysis *)
+(* A simplfied version of the above tactic. This one is simpler,
+   but it also makes the tests pass. *)
 
-Ltac simplify_one_dep_elim_term_verbose c :=
+Ltac simplify_one_dep_elim_term_simplified c :=
   match c with
-    | @JMeq _ _ _ _ -> _ =>     (* done *)
+    | @JMeq _ _ _ _ -> _ =>
        refine (@simplification_heq _ _ _ _ _) || fail 1
     | ?t = ?t -> _ =>
        (intros _ || refine (@simplification_K _ _ _ _)) || fail 1
-       (* intros _ || refine (@simplification_K _ t _ _) *)
     | (@existT ?A ?P ?n ?x) = (@existT ?A ?P ?n ?y) -> ?B =>
        refine (@simplification_existT2 _ _ _ _ _ _ _) || fail 1
     | eq (existT _ ?p _) (existT _ ?q _) -> _ =>
@@ -519,11 +518,10 @@ Ltac simplify_one_dep_elim_term_verbose c :=
       (let hyp := fresh H in intro hyp ;
         move hyp before y ; move y before hyp; revert_blocking_until y; revert y;
         refine (@solution_right _ _ _ _) || refine (@solution_right_dep _ _ _ _)))
-
     | @eq ?A ?t ?u -> ?P =>
        (let hyp := fresh in intro hyp ; try (noconf_ref hyp)) || fail 1
     | block ?T => 
-       fail 1 (* Do not put any part of the rhs in the hyps *)
+       fail 1
     | _ => 
        intro
   end.
@@ -531,9 +529,8 @@ Ltac simplify_one_dep_elim_term_verbose c :=
 (* wjzz: wrapper for testing the OCaml tactic *)
 
 Ltac simplify_one_dep_elim_term c:=
-  (* idtac c; *)
-  wjzz_simplify_one_dep_elim c.
-  (* simplify_one_dep_elim_term_verbose c. *)
+  ml_simplify_one_dep_elim c.
+  (* simplify_one_dep_elim_term_simplified c. *)
   (* simplify_one_dep_elim_term_old c. *)
 
 Ltac simplify_one_dep_elim :=

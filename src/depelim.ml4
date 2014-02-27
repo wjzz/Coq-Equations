@@ -355,6 +355,9 @@ END
 
 (********************************************************************)
 (* Analysis of the term structure *)
+(********************************************************************)
+
+(* Code used to find out the encodings of different Coq constructions *)
 
 open Printf
 
@@ -397,9 +400,7 @@ let rec str_of_c : (constr, types) kind_of_term -> string = function
     let sx = str_of_c (kind_of_term x) in
     let sxs = Array.map (fun c -> "(" ^ str_of_c (kind_of_term c) ^ ")") xs in
     sprintf "%s %s" sx (concat_string_array sxs)
-  (* | Const cn -> sprintf "[const %s]" (string_of_con cn) *)
   | Const cn -> simplify_ind_name (string_of_con cn)
-  (* | Ind (mind, _n) -> sprintf "[ind %s]" (string_of_mind mind) *)
   | Ind (mind, _n) -> simplify_ind_name (string_of_mind mind)
   | Construct _ -> "constructor"
   | Case _ -> "case"
@@ -411,9 +412,8 @@ let print_constr_structure : constr -> unit =
     Printf.eprintf "%s\n%!" (str_of_c (kind_of_term c))
 
 (***************************************************************)
-(* Introductions *)
-
-(* We are only interested in equalities ... *)
+(* Data structures and functions for destructuring terms       *)
+(***************************************************************)
 
 (* `@eq tp lhs rhs` as record *)
 type equality_info =
@@ -423,7 +423,7 @@ type equality_info =
     }
 
 type equality_case = 
-  (* | Same of constr                       (\* t = t *\) *)
+  | Same of constr                       (* t = t *)
   | ExistT                               (* existT ... = existT ... *)
   | VarLeft  of identifier               (* x = ... *)
   | VarRight of identifier               (* ... = y *)
@@ -439,24 +439,19 @@ type constr_category =
   | Product
   | Unknown
 
-let name_of_eq : string =
-  "Coq.Init.Logic.eq"
+(* Names of some Coq types from stdlib *)
 
-let name_of_block : string =
-  "Equations.DepElim.block"
+let name_of_eq    : string = "Coq.Init.Logic.eq"
+let name_of_block : string = "Equations.DepElim.block"
+let name_of_sigT  : string = "Coq.Init.Specif.sigT"
+let name_of_JMeq  : string = "Coq.Logic.JMeq.JMeq"
 
-let name_of_sigT : string =
-  "Coq.Init.Specif.sigT"
+(* Term categorization functions *)
 
-let name_of_JMeq : string =
-  "Coq.Logic.JMeq.JMeq"
-
-(* term categorization *)
-
-let is_variable : constr -> identifier option =
+let is_variable_opt : constr -> identifier option =
   fun c ->
     match kind_of_term c with
-      | Var id ->
+      | Var id -> 
         Some id
       | _ ->
         None
@@ -480,7 +475,7 @@ let is_equality_opt : constr -> equality_info option =
 let is_JMeq : constr -> bool =
   fun c ->
     match kind_of_term c with
-      | App (x, xs) when is_ind_type x name_of_JMeq ->
+      | App (x, _) when is_ind_type x name_of_JMeq ->
 	true
       | _ ->
 	false
@@ -488,7 +483,7 @@ let is_JMeq : constr -> bool =
 let is_sigT : constr -> bool =
   fun c -> 
     match kind_of_term c with
-      | App (x, xs) when is_ind_type x name_of_sigT ->
+      | App (x, _) when is_ind_type x name_of_sigT ->
 	true
       | _ ->
 	false
@@ -501,22 +496,41 @@ let is_blocked_goal : constr -> bool =
       | _ ->
         false
 
+(* Categorizes the given term *)
+
 let test_constr : (constr, types) kind_of_term -> constr_category = function
-  | Prod (n, tp1, tp2) when is_JMeq tp1 ->
+  | Prod (_n, tp1, _tp2) when is_JMeq tp1 ->
     JMeq
-  | Prod (n, tp1, tp2) ->
+  | Prod (_n, tp1, _tp2) ->
     begin match is_equality_opt tp1 with
       | Some eq_info ->
         Equality eq_info
       | None -> 
         Product
     end
-  | App (x, xs) when is_blocked_goal x ->
+  | App (x, _xs) when is_blocked_goal x ->
     Block
   | _ ->
     Unknown
 
-(* fresh name generation *)
+let categorize_equality : equality_info -> equality_case =
+  fun eqinfo ->
+    (* This control flow is a bit strange, but at least it's linear *)
+    match is_variable_opt eqinfo.lhs , is_variable_opt eqinfo.rhs with
+      | _ when Term.eq_constr eqinfo.lhs eqinfo.rhs ->
+      	Same eqinfo.lhs
+      | Some x, Some y ->
+	VarBoth (x,y)
+      | Some x , None ->
+	VarLeft x
+      | None, Some y ->
+	VarRight y
+      | _ when is_sigT eqinfo.tp ->
+      	ExistT
+      | _ ->	
+	Other
+
+(* Fresh name generation *)
 
 module Fresh : sig
   val gen_identifier : unit -> identifier
@@ -531,7 +545,7 @@ struct
     id_of_string (fresh_base ^ string_of_int n)
 end
 
-(* references to existing tactics *)
+(* References to existing tactics *)
 
 let build_unary_tactic : string -> (identifier -> tactic) =
   fun tac_name id ->
@@ -564,38 +578,46 @@ let build_constant : string list -> string -> constant =
 let rec explain_exception : exn -> unit =
   fun e -> 
     match e with
-      | Refiner.FailError (l, s) as e -> 
+      | Refiner.FailError (l, s) -> 
 	let s = (string_of_ppcmds (Lazy.force s)) in
 	eprintf "lvl = %d; s = %s\n%!" l s
-      | Compat.Loc.Exc_located (a, e2) as e ->
-	(* let x = a + 1 in  *)
+
+      | Compat.Loc.Exc_located (a, e2) ->
 	let s1 = Printexc.to_string e in 
 	let s2 = Printexc.to_string e2 in 
       	let () = eprintf "Raised a located exception! %s\n%s\n%!" s1 s2 in
 	explain_exception e2
-      | TypeError (env, err) as e->
+
+      | TypeError (env, err) ->
 	ppnl (Himsg.explain_type_error env Evd.empty err)
+
       | Logic.RefinerError referr as e-> 
 	let s = Printexc.to_string e in 
 	let () = eprintf "Raised an exception!\n%s\n%!" s in
 	ppnl (Himsg.explain_refiner_error referr)
+
       | Pretype_errors.PretypeError (evd, env, err) as e ->
 	let s = Printexc.to_string e in 
 	let () = eprintf "Raised a type exception!\n%s\n%!" s in
 	ppnl (Himsg.explain_pretype_error evd env err)	  
+
       | Nametab.GlobalizationError qualid ->
 	ppnl (pr_qualid qualid)
-      | e -> 
+
+      | _ -> 
 	let s = Printexc.to_string e in 
 	let () = eprintf "Raised a generic exception!\n%s\n%!" s in
 	ppnl (Cerrors.explain_exn_default e)
+
+(* A wrapper function for analyzing the exceptions *)
 
 let analyze_exceptions : 'a Lazy.t -> 'a =
   fun a ->
     try
       Lazy.force a
     with
-      | e -> explain_exception e; raise e
+      | e -> 
+	explain_exception e; raise e
 
 (*******************************************************)
 (*          the `simplify_one_dep_elim` tactic         *)
@@ -646,86 +668,19 @@ let build_refine_argument_in_steps : string -> int -> goal sigma -> open_constr 
     let oconstr = interp_open_constr gl glob_expr in
     oconstr
 
+(* Given f and n calls refine on (@f _ _ ... _) with n holes *)
+
 let call_refine : string -> int -> tactic = 
   fun lemma num gl ->
-    analyze_exceptions (lazy
-    (* let () = ppnl (Printer.pr_goal gl) in  *)
+    (* analyze_exceptions (lazy *)
     let open_constr = build_refine_argument_in_steps lemma num gl in
-    (* let () = Printf.printf "calling refine...\n" in *)
     Refine.refine open_constr gl
-    )
-
-(** given f and n builds (@f _ _ ... _) [n - number of holes ] **)
-
-let build_explicit_app_with_holes2 : reference -> constr_expr -> constr_expr =
-  fun fn cexpr ->
-    let hole = Topconstr.CHole (dummy_loc, None) in
-    let args = [ hole ; cexpr ; hole ; hole ] in
-    (* let args = Util.list_make hole_num hole in *)
-    Topconstr.CAppExpl (dummy_loc, (None, fn), args)
-
-(** given lemma name, dummy argument number, and the current goal
-    creates the term argument for refine **)
-
-let build_refine_argument_in_steps2 : constr_expr -> string -> goal sigma -> open_constr =
-  fun t fn_name gl ->
-    let () = Printf.printf "*** starting refine\n%!" in
-    let ref_name = create_reference_to_lemma fn_name in
-    let cexpr = build_explicit_app_with_holes2 ref_name t in
-    let goal_type = pf_concl gl in
-    let () = Printf.printf "*** before refine\n%!" in
-    (** wjzz: the error is here! **)
-    let env = pf_env gl in 
-    let glob_expr = 
-      (* Constrintern.intern_gen false Evd.empty Environ.empty_env *)
-      Constrintern.intern_gen false Evd.empty env
-	~allow_patvar:false ~ltacvars:([], []) cexpr in
-    let () = Printf.printf "*** after refine\n%!" in
-    let oconstr = interp_open_constr gl glob_expr in
-    let () = Printf.printf "*** finished refine\n%!" in
-    oconstr
-
-let call_refine2 : constr_expr -> string -> tactic = 
-  fun t lemma gl ->
-    analyze_exceptions (lazy
-    (* let () = ppnl (Printer.pr_goal gl) in  *)
-    let open_constr = build_refine_argument_in_steps2 t lemma gl in
-    (* let () = Printf.printf "calling refine...\n" in *)
-    Refine.refine open_constr gl
-    )
 
 let simplify_existT : equality_info -> tactic =
   fun eqinfo ->
-    tclTHENLIST 
-      [ tclORELSE 
-	  (call_refine "simplification_existT2" 7)
-	  (call_refine "simplification_existT1" 8)
-      ; tclIDTAC_MESSAGE (str "Refine successful 2!\n")
-      ]
-
-let sides_equal_opt : equality_info -> constr option =
-  fun eqinfo ->
-    if Term.eq_constr eqinfo.lhs eqinfo.rhs then
-      Some eqinfo.lhs
-    else
-      None
-
-let categorize_equality : equality_info -> equality_case =
-  fun eqinfo ->
-    (* This control flow is a bit strange, but at least it's linear *)
-    match is_variable eqinfo.lhs , is_variable eqinfo.rhs with
-      (* | _ when Term.eq_constr eqinfo.lhs eqinfo.rhs -> *)
-      (* 	Same eqinfo.lhs *)
-      | Some x, Some y ->
-	VarBoth (x,y)
-      | Some x , None ->
-	VarLeft x
-      | None, Some y ->
-	VarRight y
-      | _ when is_sigT eqinfo.tp ->
-      	ExistT
-      | _ ->	
-	Other
+      tclORELSE 
+	(call_refine "simplification_existT2" 7)
+	(call_refine "simplification_existT1" 8)
 
 let simplify_equality_left : identifier -> equality_info -> tactic =
   fun x eqinfo ->
@@ -737,7 +692,6 @@ let simplify_equality_left : identifier -> equality_info -> tactic =
       ; revert_blocking_until x
       ; Hiddentac.h_revert [ x ]
       ; call_refine "solution_left" 4
-      ; tclIDTAC_MESSAGE (str "Refine successful!\n")
       ]
 
 let simplify_equality_right : identifier -> equality_info -> tactic =
@@ -749,37 +703,23 @@ let simplify_equality_right : identifier -> equality_info -> tactic =
       ; Hiddentac.h_move true y  (MoveBefore id)
       ; revert_blocking_until y
       ; Hiddentac.h_revert [ y ]
-      ; tclORELSE0 (call_refine "solution_right" 4)
+      ; tclORELSE0 
+	(call_refine "solution_right" 4)
         (call_refine "solution_right_dep" 4)
-      ; tclIDTAC_MESSAGE (str "Refine successful!\n")
       ]
 
 let simplify_when_equal : constr -> tactic =
   fun t gl ->
-    let () = ppnl (Printer.pr_goal gl) in
-    let t' = Constrextern.extern_constr true (pf_env gl) t in
     tclORELSE0 
       (Hiddentac.h_intro_patterns [ (dummy_loc, IntroWildcard) ])
-      (tclTHEN 
-	 (tclTHEN 
-	    (tclIDTAC_MESSAGE (str "--- K is OK???\n"))
-	    (* (call_refine "simplification_K" 4)) *)
-	 (call_refine2 t' "simplification_K"))
-	 (tclIDTAC_MESSAGE (str "--- K is OK\n")))
-       gl
-
+      (call_refine "simplification_K" 4)
+      gl
 
 let simplify_equality : equality_info -> tactic =
   fun eqinfo ->
-    tclORELSE (
-      match sides_equal_opt eqinfo with
-	| None -> tclIDTAC
-	| Some t -> simplify_when_equal t 
-    )
-    (
     match categorize_equality eqinfo with
-      (* | Same t -> *)
-      (* 	simplify_when_equal t *)
+      | Same t ->
+      	simplify_when_equal t
       | ExistT ->
 	simplify_existT eqinfo
       | VarBoth (x,y) ->
@@ -792,34 +732,20 @@ let simplify_equality : equality_info -> tactic =
 	simplify_equality_right y eqinfo
       | Other ->
         let id = Fresh.gen_identifier () in
-	tclTHEN (Hiddentac.h_intro id)
+	tclTHEN 
+	  (Hiddentac.h_intro id)
 	  (tclTRY (noconf_ref id))
-    )	  
-(* let wjzz_print_arg : (constr, types) kind_of_term -> unit =  *)
-(*   fun ck ->  *)
-(*     let () = eprintf "%s\n%!" (str_of_c ck) in *)
-(*     let () = match test_constr ck with *)
-(*       | Equality (n, eqinfo, tp2) -> *)
-(* 	eprintf "l = %s\nr = %s\n%!" *)
-(* 	  (str_of_c (kind_of_term eqinfo.lhs)) *)
-(* 	  (str_of_c (kind_of_term eqinfo.rhs))  *)
-(*       | _ ->  *)
-(* 	() *)
-(*     in *)
-(*     () *)
 
-let simplify_one : constr -> tactic = 
+let simplify_one_dep_elim : constr -> tactic = 
   fun c ->
-    let id = Fresh.gen_identifier () in
     let ck = kind_of_term c in
-    (* let () = wjzz_print_arg ck in *)
     match test_constr ck with
       | JMeq ->
-	let () = Printf.printf "---Found JMeq!\n" in
 	call_refine "simplification_heq" 5
 
       | Equality eqinfo ->
-	analyze_exceptions (lazy (simplify_equality eqinfo))
+	simplify_equality eqinfo
+	(* analyze_exceptions (lazy (simplify_equality eqinfo)) *)
 
       | Block ->
         tclFAIL 0 (str "Block reached!")
@@ -828,19 +754,5 @@ let simplify_one : constr -> tactic =
 	Hiddentac.h_intro_move None (MoveToEnd true)
 
 TACTIC EXTEND wjzz_test
-[ "wjzz_simplify_one_dep_elim" constr(c) ] -> [ simplify_one c ]
+[ "ml_simplify_one_dep_elim" constr(c) ] -> [ simplify_one_dep_elim c ]
 END
-
-(*
-(Coq.Init.Logic.eq Coq.Init.Specif.sigT A lambda constructor A lambda x0 x constructor A lambda x1 y -> Coq.Init.Logic.False)
-l = constructor A lambda x0 x
-r = constructor A lambda x1 y
-HELLO2
-*)
-(*
-(Coq.Init.Logic.eq Coq.Init.Specif.sigT A lambda constructor A lambda x1 x constructor A lambda x1 y -> Coq.Init.Logic.False)
-l = constructor A lambda x1 x
-r = constructor A lambda x1 y
-HELLO
-*)
-(* simplification_existT1 simplification_existT2 simplification_existT2_dec *)
